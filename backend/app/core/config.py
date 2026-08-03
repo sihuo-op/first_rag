@@ -118,6 +118,12 @@ class Settings(BaseSettings):
     FIRST_ADMIN_PASSWORD: str = "admin123"
     FIRST_ADMIN_EMAIL: str = "admin@example.com"
 
+    # OpenTelemetry 配置
+    OTEL_ENABLED: bool = True
+    OTEL_SERVICE_NAME: str = "first-rag-backend"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4317"
+    OTEL_SAMPLING_RATE: float = 1.0
+
     @property
     def allowed_extensions_list(self) -> list[str]:
         return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
