@@ -1,0 +1,22 @@
+{
+  "retrieval": {
+    "recall_at_5_min": 0.5,
+    "recall_at_10_min": 0.6,
+    "mrr_min": 0.3,
+    "keyword_hit_rate_min": 0.5,
+    "error_rate_max": 0.05
+  },
+  "rag": {
+    "answer_rule_score_min": 0.55,
+    "context_hit_rate_min": 0.5,
+    "error_rate_max": 0.1,
+    "p95_latency_seconds_max": 90
+  },
+  "e2e": {
+    "answer_rule_score_min": 0.55,
+    "memory_rewrite_hit_rate_min": 0.5,
+    "multi_task_success_rate_min": 0.5,
+    "error_rate_max": 0.1,
+    "p95_latency_seconds_max": 120
+  }
+}

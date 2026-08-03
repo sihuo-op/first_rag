@@ -1,0 +1,159 @@
+{
+  "timestamp": "2026-06-28T20:40:24",
+  "dataset_path": "D:\\tln\\code\\first_rag\\backend\\evals\\golden_labor_law.jsonl",
+  "thresholds_path": "D:\\tln\\code\\first_rag\\backend\\evals\\thresholds.json",
+  "mode": "retrieval",
+  "category": null,
+  "case_id": "labor_single_001",
+  "passed": true,
+  "results": {
+    "retrieval": {
+      "mode": "retrieval",
+      "summary": {
+        "recall_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "ndcg_at_10": 1.0,
+        "keyword_hit_rate": 1.0,
+        "case_count": 1,
+        "error_rate": 0.0,
+        "avg_latency_seconds": 27.5986,
+        "p95_latency_seconds": 27.5986
+      },
+      "cases": [
+        {
+          "id": "labor_single_001",
+          "category": "single_hop",
+          "query": "试用期被辞退能拿补偿吗？",
+          "metrics": {
+            "recall_at_5": 1.0,
+            "recall_at_10": 1.0,
+            "mrr": 1.0,
+            "ndcg_at_10": 1.0,
+            "keyword_hit_rate": 1.0,
+            "latency_seconds": 27.5986,
+            "result_count": 5,
+            "has_error": 0.0
+          },
+          "retrieved": [
+            {
+              "id": "12b39035-bf0b-4c07-adab-29c2ebd9ac20",
+              "document_id": 2,
+              "score": 0.6408125758171082,
+              "content_preview": "用人单位依据本条规定裁减人员，在六个月内录用人员的，应当优先录用被裁减的人员。 第二十八条 用人单位依据本法第二十四条、第二十六条、第二十七条的规定解除劳动合同的，应当依照国家有关规定给予经济补偿。"
+            },
+            {
+              "id": "a647a42d-51ed-4d15-a32a-826bfbce1fde",
+              "document_id": 2,
+              "score": 0.5874820947647095,
+              "content_preview": "（四）解除劳动合同后，未依照本法规定给予劳动者经济补偿的。 第九十二条"
+            },
+            {
+              "id": "61bc873f-b95b-44b6-8c7f-1379c69f65b1",
+              "document_id": 2,
+              "score": 0.5899904370307922,
+              "content_preview": "劳动者有下列情形之一的，用人单位可以解除劳动合同： （一）在试用期间被证明不符合录用条件的； （二）严重违反劳动纪律或者用人单位规章制度的； （三）严重失职，营私舞弊，对用人单位利益造成重大损害的； （四）被依法追究刑事责任的。"
+            },
+            {
+              "id": "4f1c20d9-325a-4964-aede-a03e5384bd30",
+              "document_id": 2,
+              "score": 0.5814188718795776,
+              "content_preview": "劳动者解除劳动合同，应当提前三十日以书面形式通知用人单位。 第三十二条 有下列情形之一的，劳动者可以随时通知用人单位解除劳动合同： （一）在试用期内的； （二）用人单位以暴力、威胁或者非法限制人身自由的手段强迫劳动的； （三）用人单位未按照劳动合同约定支付劳动报酬或者提供劳动条件的。"
+            },
+            {
+              "id": "994a5721-2b2e-42fe-bf36-154aeeee5a64",
+              "document_id": 2,
+              "score": 0.5990504026412964,
+              "content_preview": "第二十一条 劳动合同可以约定试用期。试用期最长不得超过六个月。 第二十二条 劳动合同当事人可以在劳动合同中约定保守用人单位商业秘密的有关事项。 第二十三条 劳动合同期满或者当事人约定的劳动合同终止条件出现，劳动合同即行终止。 第二十四条 经劳动合同当事人协商一致，劳动合同可以解除。 第二十五条"
+            }
+          ],
+          "debug": {
+            "steps": [
+              {
+                "step": "embedding",
+                "desc": "查询向量化",
+                "vector_dim": 1024,
+                "time_s": 19.295
+              },
+              {
+                "step": "dense_search",
+                "desc": "密集向量检索（仅小块）",
+                "count": 5,
+                "time_s": 0.03
+              },
+              {
+                "step": "sparse_search",
+                "desc": "稀疏检索（BM25）",
+                "count": 0,
+                "time_s": 0.0
+              },
+              {
+                "step": "merge",
+                "desc": "RRF 排名融合（k=60）",
+                "count": 5,
+                "time_s": 0.0
+              },
+              {
+                "step": "dedup",
+                "desc": "去重",
+                "count": 5,
+                "time_s": 0.0
+              },
+              {
+                "step": "rerank",
+                "desc": "CrossEncoder 重排序",
+                "count": 5,
+                "time_s": 8.274
+              }
+            ],
+            "dense_results": 5,
+            "sparse_results": 0,
+            "rerank_used": true,
+            "chunks_by_type": {
+              "small": 5,
+              "medium": 0,
+              "large": 0
+            }
+          }
+        }
+      ]
+    }
+  },
+  "threshold_checks": {
+    "retrieval": {
+      "passed": true,
+      "checks": [
+        {
+          "metric": "recall_at_5",
+          "value": 1.0,
+          "threshold": 0.5,
+          "passed": true
+        },
+        {
+          "metric": "recall_at_10",
+          "value": 1.0,
+          "threshold": 0.6,
+          "passed": true
+        },
+        {
+          "metric": "mrr",
+          "value": 1.0,
+          "threshold": 0.3,
+          "passed": true
+        },
+        {
+          "metric": "keyword_hit_rate",
+          "value": 1.0,
+          "threshold": 0.5,
+          "passed": true
+        },
+        {
+          "metric": "error_rate",
+          "value": 0.0,
+          "threshold": 0.05,
+          "passed": true
+        }
+      ]
+    }
+  }
+}

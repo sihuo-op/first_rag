@@ -1,0 +1,126 @@
+{
+  "timestamp": "2026-06-28T20:42:57",
+  "dataset_path": "D:\\tln\\code\\first_rag\\backend\\evals\\golden_labor_law.jsonl",
+  "thresholds_path": "D:\\tln\\code\\first_rag\\backend\\evals\\thresholds.json",
+  "mode": "e2e",
+  "category": null,
+  "case_id": "negative_001",
+  "passed": false,
+  "results": {
+    "e2e": {
+      "mode": "e2e",
+      "summary": {
+        "answer_rule_score": 1.0,
+        "context_hit_rate": 1.0,
+        "memory_rewrite_hit_rate": 1.0,
+        "multi_task_success_rate": 1.0,
+        "case_count": 1,
+        "error_rate": 1.0,
+        "avg_latency_seconds": 124.861,
+        "p95_latency_seconds": 124.861
+      },
+      "cases": [
+        {
+          "id": "negative_001",
+          "category": "negative_or_irrelevant",
+          "query": "帮我写一首关于夏天的诗。",
+          "metrics": {
+            "answer_rule_score": 1.0,
+            "context_hit_rate": 1.0,
+            "memory_rewrite_hit_rate": 1.0,
+            "multi_task_success_rate": 1.0,
+            "latency_seconds": 124.861,
+            "has_error": 1.0
+          },
+          "answer": "未收到您明确的、具体的劳动法相关咨询问题，请您补充后我再为您解答。",
+          "conversation_id": 817,
+          "retrieved": [
+            {
+              "id": "",
+              "document_id": null,
+              "score": 0.01639344262295082,
+              "content_preview": "根据2018年12月29日第十三届全国人民代表大会常务委员会第七次会议《关于修改〈中华人民共和国劳动法〉等七部法律的决定》第二次修正） 目 录 第一章 总 则 第二章 促进就业 第三章 劳动合同和集体合同 第四章 工作时间和休息休假 第五章 工 资 第六章 劳动安全卫生 第七章 女职工和未成年工特殊保护"
+            },
+            {
+              "id": "",
+              "document_id": null,
+              "score": 0.015625,
+              "content_preview": "第八章 职业培训 第九章 社会保险和福利 第十章 劳动争议 第十一章 监督检查 第十二章 法律责任 第十三章 附 则 第一章 总 则 第一条 为了保护劳动者的合法权益，调整劳动关系，建立和维护适应社会主义市场经济的劳动制度，促进经济发展和社会进步，根据宪法，制定本法。 第二条"
+            },
+            {
+              "id": "",
+              "document_id": null,
+              "score": 0.016129032258064516,
+              "content_preview": "第十章 劳动争议 第七十七条 用人单位与劳动者发生劳动争议，当事人可以依法申请调解、仲裁、提起诉讼，也可以协商解决。 调解原则适用于仲裁和诉讼程序。 第七十八条 解决劳动争议，应当根据合法、公正、及时处理的原则，依法维护劳动争议当事人的合法权益。"
+            },
+            {
+              "id": "",
+              "document_id": null,
+              "score": 0.015873015873015872,
+              "content_preview": "（四）解除劳动合同后，未依照本法规定给予劳动者经济补偿的。 第九十二条"
+            }
+          ],
+          "debug": {
+            "memory_info": {
+              "standalone_query": "根据当前提供的所有会话及记忆信息，未发现任何与劳动法相关的内容，无法将当前问题改写成适合检索的",
+              "summary_used": false,
+              "unsummarized_message_count": 1,
+              "long_term_memories": [],
+              "token_budget": {
+                "used": 37,
+                "budget": 22400,
+                "ratio": 0.8,
+                "compressed": false
+              }
+            },
+            "decomposed_tasks": [
+              {
+                "id": 1,
+                "question": "根据当前提供的所有会话及记忆信息，未发现任何与劳动法相关的内容，无法将当前问题改写成适合检索的"
+              }
+            ],
+            "sub_task_count": 1,
+            "mode": "parallel_rag_tools"
+          }
+        }
+      ]
+    }
+  },
+  "threshold_checks": {
+    "e2e": {
+      "passed": false,
+      "checks": [
+        {
+          "metric": "answer_rule_score",
+          "value": 1.0,
+          "threshold": 0.55,
+          "passed": true
+        },
+        {
+          "metric": "memory_rewrite_hit_rate",
+          "value": 1.0,
+          "threshold": 0.5,
+          "passed": true
+        },
+        {
+          "metric": "multi_task_success_rate",
+          "value": 1.0,
+          "threshold": 0.5,
+          "passed": true
+        },
+        {
+          "metric": "error_rate",
+          "value": 1.0,
+          "threshold": 0.1,
+          "passed": false
+        },
+        {
+          "metric": "p95_latency_seconds",
+          "value": 124.861,
+          "threshold": 120,
+          "passed": false
+        }
+      ]
+    }
+  }
+}
