@@ -48,6 +48,11 @@ app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
 
+# OTel 初始化（必须在所有 middleware 和 router 注册之后，使 OTel 成为最外层 middleware）
+from app.core.observability import setup_otel, instrument_app
+setup_otel(settings)
+instrument_app(app)
+
 
 @app.on_event("startup")
 async def startup_event():
