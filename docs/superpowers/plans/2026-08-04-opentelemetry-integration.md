@@ -257,7 +257,7 @@ from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.trace.sampling import TraceIdRatioBasedSampler
+from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
 _initialized = False
 
@@ -274,7 +274,7 @@ def setup_otel(settings) -> None:
         resource = Resource.create({"service.name": settings.OTEL_SERVICE_NAME})
         provider = TracerProvider(
             resource=resource,
-            sampler=TraceIdRatioBasedSampler(settings.OTEL_SAMPLING_RATE),
+            sampler=TraceIdRatioBased(settings.OTEL_SAMPLING_RATE),
         )
         exporter = OTLPSpanExporter(
             endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT,

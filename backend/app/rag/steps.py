@@ -10,9 +10,13 @@ from typing import Any, ClassVar, Dict, List
 import jieba
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool as langchain_tool
+from opentelemetry import trace
 from pydantic import BaseModel, Field
 
+from app.core.observability import get_tracer
 from app.llm.providers import invoke_llm_threadsafe
+
+tracer = get_tracer("rag.tools")
 
 # ============ 工具基类 ============
 
@@ -32,8 +36,24 @@ class BaseTool(ABC):
     def __init__(self, llm=None):
         self.llm = llm
 
-    @abstractmethod
     def execute(self, state: Dict) -> ToolResult:
+        """模板方法：自动包 span、记录 attribute 和 status。子类实现 _execute_impl。"""
+        with tracer.start_as_current_span(f"rag.{self.name}") as span:
+            span.set_attribute("tool.name", self.name)
+            try:
+                result = self._execute_impl(state)
+                span.set_attribute("tool.success", result.success)
+                if not result.success:
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, result.message))
+                return result
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                raise
+
+    @abstractmethod
+    def _execute_impl(self, state: Dict) -> ToolResult:
+        """子类实现具体逻辑。异常可自行 try/except 返回 ToolResult，或让基类捕获记录。"""
         pass
 
     def to_langchain_tool(self):
@@ -59,7 +79,7 @@ class RetrieveTool(BaseTool):
         self.retriever = retriever
         self.default_top_k = top_k
 
-    def execute(self, state: Dict) -> ToolResult:
+    def _execute_impl(self, state: Dict) -> ToolResult:
         query = state.get("current_query", state.get("original_question", ""))
         top_k = state.get("top_k", self.default_top_k)
 
@@ -76,6 +96,7 @@ class RetrieveTool(BaseTool):
                 "rrf_score": c.get("rrf_score", 0),
             } for c in chunks]
 
+            trace.get_current_span().set_attribute("tool.docs_found", len(documents))
             return ToolResult(
                 success=True,
                 data={"documents": documents, "count": len(documents), "query": query},
@@ -99,7 +120,7 @@ class RewriteTool(BaseTool):
         super().__init__(llm=llm)
         self.default_rewrite_type = rewrite_type
 
-    def execute(self, state: Dict) -> ToolResult:
+    def _execute_impl(self, state: Dict) -> ToolResult:
         question = state.get("original_question", "")
         current_query = state.get("current_query", question)
         rewrite_type = state.get("rewrite_type", self.default_rewrite_type)
@@ -117,6 +138,8 @@ class RewriteTool(BaseTool):
         if rewrite_type not in self.REWRITE_TYPES:
             rewrite_type = self._auto_select_rewrite_type(state)
 
+        span = trace.get_current_span()
+        span.set_attribute("tool.rewrite_type", rewrite_type)
         try:
             prompt = self._build_prompt(current_query, rewrite_type, documents, eval_grade, eval_reason)
             response = invoke_llm_threadsafe(self.llm, [HumanMessage(content=prompt)])
@@ -124,6 +147,7 @@ class RewriteTool(BaseTool):
             if not queries:
                 return ToolResult(success=False, data=None, message="改写结果为空")
 
+            span.set_attribute("tool.queries_count", len(queries))
             return ToolResult(
                 success=True,
                 data={"queries": queries, "rewrite_type": rewrite_type, "original_query": current_query},
@@ -215,7 +239,7 @@ class GenerateTool(BaseTool):
         super().__init__(llm=llm)
         self.max_context_docs = max_context_docs
 
-    def execute(self, state: Dict) -> ToolResult:
+    def _execute_impl(self, state: Dict) -> ToolResult:
         question = state.get("original_question", "")
         documents = state.get("documents", [])
 
@@ -226,6 +250,7 @@ class GenerateTool(BaseTool):
 
         try:
             answer, prompt = self._generate_answer(question, documents)
+            trace.get_current_span().set_attribute("tool.docs_used", min(len(documents), self.max_context_docs))
             return ToolResult(
                 success=True,
                 data={"answer": answer, "used_documents": min(len(documents), self.max_context_docs), "prompt": prompt},
@@ -287,7 +312,7 @@ class EvaluateTool(BaseTool):
         super().__init__(llm=llm)
         self.confidence_threshold = confidence_threshold
 
-    def execute(self, state: Dict) -> ToolResult:
+    def _execute_impl(self, state: Dict) -> ToolResult:
         question = state.get("original_question", "")
         documents = state.get("documents", [])
 
@@ -312,6 +337,11 @@ class EvaluateTool(BaseTool):
             evaluation = self._rule_evaluate_chunks(question, documents)
 
         is_sufficient = evaluation["grade"] == self.CORRECT
+
+        span = trace.get_current_span()
+        span.set_attribute("tool.grade", evaluation["grade"])
+        span.set_attribute("tool.confidence", evaluation["confidence"])
+        span.set_attribute("tool.evaluation_method", evaluation.get("method", "unknown"))
 
         return ToolResult(
             success=True,

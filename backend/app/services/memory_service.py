@@ -4,13 +4,17 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage
+from opentelemetry import trace
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.observability import get_tracer
 from app.entities.database import ChatMessage, ConversationSummary, MemoryType, MessageRole, UserMemory
 from app.llm.providers import get_rewrite_llm, invoke_llm_threadsafe
 from app.rag.vector_store import MilvusStore
 from app.services.token_budget import TokenBudget
+
+tracer = get_tracer("memory")
 
 
 class MemoryService:
@@ -41,6 +45,14 @@ class MemoryService:
         }
 
     def rewrite_query_with_memory(self, query: str, memory_context: Dict[str, Any]) -> str:
+        with tracer.start_as_current_span("memory.rewrite_query") as span:
+            span.set_attribute("memory.query", query)
+            span.set_attribute("memory.has_summary", bool(memory_context.get("summary")))
+            span.set_attribute("memory.unsummarized_count", len(memory_context.get("unsummarized_messages", [])))
+            span.set_attribute("memory.long_term_count", len(memory_context.get("long_term_memories", [])))
+            return self._rewrite_query_with_memory_impl(query, memory_context)
+
+    def _rewrite_query_with_memory_impl(self, query: str, memory_context: Dict[str, Any]) -> str:
         if not self.settings.MEMORY_ENABLED:
             return query
 
@@ -89,6 +101,21 @@ class MemoryService:
             return query
 
     def extract_long_term_memories_after_turn(self, user_id: int, conversation_id: int, user_query: str, answer: str) -> List[Dict[str, Any]]:
+        with tracer.start_as_current_span("memory.extract") as span:
+            span.set_attribute("memory.user_id", user_id)
+            span.set_attribute("memory.conversation_id", conversation_id)
+            span.set_attribute("memory.query_len", len(user_query))
+            span.set_attribute("memory.answer_len", len(answer))
+            try:
+                result = self._extract_long_term_memories_impl(user_id, conversation_id, user_query, answer)
+                span.set_attribute("memory.extracted_count", len(result))
+                return result
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+                raise
+
+    def _extract_long_term_memories_impl(self, user_id: int, conversation_id: int, user_query: str, answer: str) -> List[Dict[str, Any]]:
         if not self.settings.MEMORY_ENABLED:
             return []
 
@@ -224,6 +251,12 @@ class MemoryService:
         return selected
 
     def _summarize_messages(self, old_summary: str, messages: List[ChatMessage]) -> str:
+        with tracer.start_as_current_span("memory.summarize") as span:
+            span.set_attribute("memory.message_count", len(messages))
+            span.set_attribute("memory.old_summary_len", len(old_summary or ""))
+            return self._summarize_messages_impl(old_summary, messages)
+
+    def _summarize_messages_impl(self, old_summary: str, messages: List[ChatMessage]) -> str:
         history = "\n".join(f"{self._role_label(message.role.value)}: {message.content}" for message in messages)
         prompt = f"""请更新会话滚动摘要，用于后续多轮问答理解上下文。
 

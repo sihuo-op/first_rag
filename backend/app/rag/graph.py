@@ -10,7 +10,10 @@ import time
 from typing import Optional, List, Dict, Any, TypedDict
 from langchain_core.language_models import BaseChatModel
 
+from app.core.observability import get_tracer
 from app.rag.steps import RetrieveTool, RewriteTool, GenerateTool, EvaluateTool
+
+tracer = get_tracer("rag.graph")
 
 
 # ============ 状态定义 ============
@@ -93,9 +96,16 @@ class RAGGraph:
         self.evaluate_tool = EvaluateTool(llm=evaluation_llm)
 
     def run(self, question: str, generate_answer: bool = True) -> Dict[str, Any]:
-        """
-        运行完整的 Agentic RAG 流程
-        
+        """运行完整的 Agentic RAG 流程"""
+        with tracer.start_as_current_span("rag.run") as span:
+            span.set_attribute("rag.question", question)
+            span.set_attribute("rag.max_attempts", self.max_attempts)
+            span.set_attribute("rag.top_k", self.top_k)
+            return self._run_impl(question, generate_answer)
+
+    def _run_impl(self, question: str, generate_answer: bool) -> Dict[str, Any]:
+        """运行完整的 Agentic RAG 流程
+
         Returns:
             包含回答、检索文档、执行日志等信息的字典
         """

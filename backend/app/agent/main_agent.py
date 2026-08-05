@@ -5,10 +5,14 @@ import time
 from typing import Any, Dict, List
 
 from langchain_core.messages import HumanMessage
+from opentelemetry import trace
 
+from app.core.observability import get_tracer
 from app.rag.graph import RAGGraph
 from app.agent.rag_qa_tool import RAGQATool
 from app.llm.providers import get_generation_llm, invoke_llm_threadsafe
+
+tracer = get_tracer("agent")
 
 
 class MainAgent:
@@ -152,6 +156,17 @@ class MainAgent:
         generate_answer: bool = True
     ) -> Dict[str, Any]:
         """运行主编排器：拆分复杂问题，并行调用 RAG QA 工具。"""
+        with tracer.start_as_current_span("agent.run_parallel") as span:
+            span.set_attribute("agent.question", question)
+            return await self._run_parallel_impl(question, max_subtasks, max_concurrency, generate_answer)
+
+    async def _run_parallel_impl(
+        self,
+        question: str,
+        max_subtasks: int,
+        max_concurrency: int,
+        generate_answer: bool,
+    ) -> Dict[str, Any]:
         start_time = time.time()
 
         if not self._is_labor_law_question(question):
@@ -305,6 +320,11 @@ class MainAgent:
         }
 
     def _decompose_question(self, question: str, max_subtasks: int) -> List[Dict[str, Any]]:
+        with tracer.start_as_current_span("agent.decompose") as span:
+            span.set_attribute("agent.question", question)
+            return self._decompose_question_impl(question, max_subtasks)
+
+    def _decompose_question_impl(self, question: str, max_subtasks: int) -> List[Dict[str, Any]]:
         prompt = f"""你是一个任务拆分器。请判断用户问题是否包含多个独立的劳动法咨询任务。
 
 要求：
@@ -336,6 +356,11 @@ class MainAgent:
             return [{"id": 1, "question": question}]
 
     def _merge_tool_results(self, original_question: str, sub_tasks: List[Dict[str, Any]]) -> str:
+        with tracer.start_as_current_span("agent.merge") as span:
+            span.set_attribute("agent.subtask_count", len(sub_tasks))
+            return self._merge_tool_results_impl(original_question, sub_tasks)
+
+    def _merge_tool_results_impl(self, original_question: str, sub_tasks: List[Dict[str, Any]]) -> str:
         result_text = "\n\n".join(
             f"子问题{item.get('task_id')}: {item.get('question')}\n回答: {item.get('answer', '')}"
             for item in sub_tasks
@@ -387,6 +412,11 @@ class MainAgent:
         return question_mark_count > 1 or any(marker in question for marker in multi_task_markers)
 
     def _direct_answer(self, question: str) -> str:
+        with tracer.start_as_current_span("agent.direct_answer") as span:
+            span.set_attribute("agent.question", question)
+            return self._direct_answer_impl(question)
+
+    def _direct_answer_impl(self, question: str) -> str:
         """
         直接回答非知识库问题
         

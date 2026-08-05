@@ -11,6 +11,10 @@ import time
 import jieba
 from rank_bm25 import BM25Okapi
 
+from app.core.observability import get_tracer
+
+tracer = get_tracer("rag.retrieve")
+
 
 class BaseRetriever(ABC):
     """检索器基类"""
@@ -166,15 +170,21 @@ class HybridRetriever(BaseRetriever):
         }
 
         # 1. 密集向量检索（只查小块）
-        embedding_start = time.time()
-        query_vector = self.vector_store.embed_query(query)
-        embedding_time = time.time() - embedding_start
-        debug_info["steps"].append({"step": "embedding", "desc": "查询向量化", "vector_dim": len(query_vector), "time_s": round(embedding_time, 3)})
+        with tracer.start_as_current_span("rag.retrieve.embedding") as span:
+            embedding_start = time.time()
+            query_vector = self.vector_store.embed_query(query)
+            embedding_time = time.time() - embedding_start
+            span.set_attribute("retrieve.vector_dim", len(query_vector))
+            span.set_attribute("retrieve.embedding_time_s", round(embedding_time, 3))
+            debug_info["steps"].append({"step": "embedding", "desc": "查询向量化", "vector_dim": len(query_vector), "time_s": round(embedding_time, 3)})
 
         filter_expr = 'chunk_type == "small"'
-        dense_start = time.time()
-        results = self.vector_store.search_vectors(collection_name="chunks", query_vector=query_vector, top_k=top_k, filter_expr=filter_expr)
-        dense_time = time.time() - dense_start
+        with tracer.start_as_current_span("rag.retrieve.dense") as span:
+            dense_start = time.time()
+            results = self.vector_store.search_vectors(collection_name="chunks", query_vector=query_vector, top_k=top_k, filter_expr=filter_expr)
+            dense_time = time.time() - dense_start
+            span.set_attribute("retrieve.dense_count", len(results))
+            span.set_attribute("retrieve.dense_time_s", round(dense_time, 3))
 
         dense_results = []
         dense_by_type = {"small": [], "medium": [], "large": []}
@@ -190,9 +200,12 @@ class HybridRetriever(BaseRetriever):
         debug_info["steps"].append({"step": "dense_search", "desc": "密集向量检索（仅小块）", "count": len(dense_results), "time_s": round(dense_time, 3)})
 
         # 2. 稀疏检索（BM25）
-        sparse_start = time.time()
-        sparse_results = self.sparse_retriever.retrieve(query, top_k=top_k)
-        sparse_time = time.time() - sparse_start
+        with tracer.start_as_current_span("rag.retrieve.sparse") as span:
+            sparse_start = time.time()
+            sparse_results = self.sparse_retriever.retrieve(query, top_k=top_k)
+            sparse_time = time.time() - sparse_start
+            span.set_attribute("retrieve.sparse_count", len(sparse_results))
+            span.set_attribute("retrieve.sparse_time_s", round(sparse_time, 3))
         for r in sparse_results:
             r["sparse_score"] = r.pop("score", 0)
         debug_info["sparse_results"] = len(sparse_results)
@@ -200,9 +213,12 @@ class HybridRetriever(BaseRetriever):
         debug_info["steps"].append({"step": "sparse_search", "desc": "稀疏检索（BM25）", "count": len(sparse_results), "time_s": round(sparse_time, 3)})
 
         # 3. RRF 排名融合
-        merge_start = time.time()
-        all_results = self._merge_with_rrf(dense_results, sparse_results, top_k)
-        merge_time = time.time() - merge_start
+        with tracer.start_as_current_span("rag.retrieve.merge") as span:
+            merge_start = time.time()
+            all_results = self._merge_with_rrf(dense_results, sparse_results, top_k)
+            merge_time = time.time() - merge_start
+            span.set_attribute("retrieve.merged_count", len(all_results))
+            span.set_attribute("retrieve.rrf_k", self.rrf_k)
         debug_info["detail"]["merged_results"] = [
             {"content": r.get("content", ""), "rrf_score": round(r.get("rrf_score", 0), 4)}
             for r in sorted(all_results, key=lambda x: x.get("rrf_score", 0), reverse=True)[:10]
@@ -210,26 +226,32 @@ class HybridRetriever(BaseRetriever):
         debug_info["steps"].append({"step": "merge", "desc": f"RRF 排名融合（k={self.rrf_k}）", "count": len(all_results), "time_s": round(merge_time, 3)})
 
         # 4. 去重
-        dedup_start = time.time()
-        unique_results = []
-        seen_contents = set()
-        for result in sorted(all_results, key=lambda x: x.get("rrf_score", 0), reverse=True):
-            content = result.get("content", "")
-            if content not in seen_contents:
-                seen_contents.add(content)
-                unique_results.append(result)
-            if len(unique_results) >= top_k:
-                break
-        dedup_time = time.time() - dedup_start
+        with tracer.start_as_current_span("rag.retrieve.dedup") as span:
+            dedup_start = time.time()
+            unique_results = []
+            seen_contents = set()
+            for result in sorted(all_results, key=lambda x: x.get("rrf_score", 0), reverse=True):
+                content = result.get("content", "")
+                if content not in seen_contents:
+                    seen_contents.add(content)
+                    unique_results.append(result)
+                if len(unique_results) >= top_k:
+                    break
+            dedup_time = time.time() - dedup_start
+            span.set_attribute("retrieve.dedup_count", len(unique_results))
         debug_info["detail"]["deduped_results"] = [{"content": r.get("content", ""), "rrf_score": round(r.get("rrf_score", 0), 4), "chunk_type": r.get("chunk_type", "unknown")} for r in unique_results]
         debug_info["steps"].append({"step": "dedup", "desc": "去重", "count": len(unique_results), "time_s": round(dedup_time, 3)})
 
         # 5. 重排序
         rerank_time = 0
         if self.use_reranker and self.reranker and len(unique_results) > 0:
-            rerank_start = time.time()
-            reranked_results = self.reranker.rerank(query, unique_results.copy(), self.top_n)
-            rerank_time = time.time() - rerank_start
+            with tracer.start_as_current_span("rag.retrieve.rerank") as span:
+                rerank_start = time.time()
+                reranked_results = self.reranker.rerank(query, unique_results.copy(), self.top_n)
+                rerank_time = time.time() - rerank_start
+                span.set_attribute("retrieve.rerank_count", len(reranked_results))
+                span.set_attribute("retrieve.rerank_time_s", round(rerank_time, 3))
+                span.set_attribute("retrieve.reranker_model", self.reranker.model_name)
             debug_info["detail"]["reranked_results"] = [
                 {"content": r.get("content", ""), "rrf_score": round(r.get("rrf_score", 0), 4),
                  "rerank_score": round(r.get("rerank_score", 0), 4) if r.get("rerank_score") else None, "chunk_type": r.get("chunk_type", "unknown")}

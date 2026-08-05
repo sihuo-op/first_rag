@@ -46,3 +46,11 @@ dist/
 firstrag/
 
 models/
+
+# Benchmarks / debug artifacts
+backend/*.log
+backend/*.json
+backend/*.csv
+backend/*.txt
+backend/bench_*.sh
+backend/benchmark_*.sh
