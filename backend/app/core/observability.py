@@ -47,14 +47,22 @@ def setup_otel(settings) -> None:
         print(f"[OTel] init failed, tracing disabled: {e}")
 
 
-def instrument_app(app: FastAPI) -> None:
-    """注册 FastAPI / httpx / SQLAlchemy 自动埋点。必须在所有 middleware 和 router 注册之后调用。"""
+def instrument_app(app: FastAPI, engine=None) -> None:
+    """注册 FastAPI / httpx / SQLAlchemy 自动埋点。必须在所有 middleware 和 router 注册之后调用。
+
+    Args:
+        app: FastAPI 实例
+        engine: SQLAlchemy engine（已存在的 engine 必须显式传入，否则 query 级 span 不生效）
+    """
     if not _initialized:
         return
     try:
         FastAPIInstrumentor.instrument_app(app)
         HTTPXClientInstrumentor().instrument()
-        SQLAlchemyInstrumentor().instrument()
+        if engine is not None:
+            SQLAlchemyInstrumentor().instrument(engine=engine)
+        else:
+            SQLAlchemyInstrumentor().instrument()
         print("[OTel] instrumentors registered: fastapi, httpx, sqlalchemy")
     except Exception as e:
         print(f"[OTel] instrument_app failed: {e}")
