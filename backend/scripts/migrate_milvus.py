@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.core.config import get_settings
 from app.core.dependencies import get_vector_store
 from app.db.session import SessionLocal
-from app.entities.database import Document, DocumentChunk, DocumentStatus
+from app.entities.database import Document, DocumentChunk, DocumentStatus, ChunkType
 from app.entities.schemas import DocumentCreate
 from app.rag.parsers import get_parser
 from app.rag.splitter import ThreeLayerSplitter
@@ -80,7 +80,7 @@ def main():
                     db_chunk = DocumentChunk(
                         document_id=doc.id,
                         content=chunk["content"],
-                        chunk_type=getattr(__import__('app.entities.database', fromlist=['ChunkType']).ChunkType, chunk["chunk_type"].upper()),
+                        chunk_type=getattr(ChunkType, chunk["chunk_type"].upper()),
                         position=chunk.get("position", idx),
                         milvus_id=milvus_ids[idx],
                         content_hash=metadata_list[idx]["content_hash"],
