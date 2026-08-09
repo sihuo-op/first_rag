@@ -85,6 +85,7 @@ class DocumentService:
         self,
         file: UploadFile,
         user_id: int,
+        title: str = None,
         background_tasks: BackgroundTasks = None
     ) -> Document:
         """
@@ -93,6 +94,7 @@ class DocumentService:
         Args:
             file: 上传的文件
             user_id: 用户 ID
+            title: 文档标题（可选，默认用文件名）
             background_tasks: 后台任务处理器
 
         Returns:
@@ -111,7 +113,8 @@ class DocumentService:
 
         db_document = Document(
             user_id=user_id,
-            filename=file.filename,
+            title=title or file.filename,
+            file_name=file.filename,
             file_path=file_path,
             file_type=file_ext.lstrip('.'),
             status=DocumentStatus.PENDING
