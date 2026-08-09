@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.rag.vector_store import MilvusStore
 from app.rag.retriever import HybridRetriever, SparseRetriever
 from app.services.conflict_service import ConflictService
+from app.services.cold_knowledge_service import ColdKnowledgeService
 
 _settings = get_settings()
 _singleton_lock = threading.RLock()
@@ -66,3 +67,11 @@ def get_conflict_service(
 ) -> ConflictService:
     """获取 ConflictService 实例（每请求新建，绑定到当前 db session）"""
     return ConflictService(db, vector_store)
+
+
+def get_cold_knowledge_service(
+    db: Session = Depends(get_db),
+    vector_store: MilvusStore = Depends(get_vector_store)
+) -> ColdKnowledgeService:
+    """获取 ColdKnowledgeService 实例（每请求新建，绑定到当前 db session）"""
+    return ColdKnowledgeService(db, vector_store)
