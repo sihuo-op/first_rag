@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any
 import os
 import uuid
+import hashlib
 from sqlalchemy.orm import Session
 from fastapi import UploadFile, BackgroundTasks
 from app.entities.database import Document, DocumentChunk, DocumentStatus, ChunkType
@@ -149,24 +150,30 @@ class DocumentService:
             metadata_list = []
             for i, chunk in enumerate(chunks):
                 for chunk_type in ['large', 'medium', 'small']:
-                    texts.append(chunk[chunk_type])
+                    text = chunk[chunk_type]
+                    texts.append(text)
                     metadata_list.append({
                         "document_id": doc_id,
-                        "chunk_type": chunk_type
+                        "chunk_type": chunk_type,
+                        "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest()
                     })
 
-            self.vector_store.add_texts("chunks", texts, metadata_list)
+            milvus_ids = self.vector_store.add_texts("chunks", texts, metadata_list)
 
+            idx = 0
             for i, chunk in enumerate(chunks):
-                for j, chunk_type in enumerate(['large', 'medium', 'small']):
+                for chunk_type in ['large', 'medium', 'small']:
                     db_chunk = DocumentChunk(
                         document_id=doc_id,
                         content=chunk[chunk_type],
                         chunk_type=getattr(ChunkType, chunk_type.upper()),
-                        chunk_index=i,
-                        milvus_id=f"{doc_id}_{i}_{j}"
+                        position=i,
+                        milvus_id=milvus_ids[idx],
+                        content_hash=metadata_list[idx]["content_hash"],
+                        status="active"
                     )
                     self.db.add(db_chunk)
+                    idx += 1
 
             document.status = DocumentStatus.ACTIVE
             self.db.commit()
