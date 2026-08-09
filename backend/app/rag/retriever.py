@@ -178,7 +178,7 @@ class HybridRetriever(BaseRetriever):
             span.set_attribute("retrieve.embedding_time_s", round(embedding_time, 3))
             debug_info["steps"].append({"step": "embedding", "desc": "查询向量化", "vector_dim": len(query_vector), "time_s": round(embedding_time, 3)})
 
-        filter_expr = 'chunk_type == "small"'
+        filter_expr = 'chunk_type == "small" && status == "active"'
         with tracer.start_as_current_span("rag.retrieve.dense") as span:
             dense_start = time.time()
             results = self.vector_store.search_vectors(collection_name="chunks", query_vector=query_vector, top_k=top_k, filter_expr=filter_expr)

@@ -237,27 +237,31 @@ class MilvusStore:
 
         Args:
             collection_name: 要搜索的集合名
-            query_vector: 查询向量（由查询文本经 embedding 模型生成）
+            query_vector: 查询向量
             top_k: 返回最相似的 top_k 条结果
-            filter_expr: 可选的过滤表达式（如 "document_id == 1"）
+            filter_expr: 可选过滤表达式。不传则默认过滤 status == 'active'，
+                         传 None 字符串可禁用过滤（如 admin 查全部）
 
         Returns:
-            检索结果列表，每项包含 id、document_id、chunk_type、content、score
+            检索结果列表
         """
         self.connect()
         full_name = self._get_full_name(collection_name)
         collection = self._get_collection(full_name)
 
+        # 默认只检索 active chunk
+        effective_filter = filter_expr if filter_expr is not None else "status == 'active'"
+
         results = collection.search(
             data=[query_vector],
             anns_field="embedding",
             param={
-                "metric_type": "COSINE",  # 使用余弦相似度计算距离
-                "params": {"nprobe": 10}  # 查询时探测的聚类中心数量，越大越精确但越慢
+                "metric_type": "COSINE",
+                "params": {"nprobe": 10}
             },
             limit=top_k,
-            expr=filter_expr,
-            output_fields=["id", "document_id", "chunk_type", "content"],
+            expr=effective_filter,
+            output_fields=["id", "document_id", "chunk_type", "content", "content_hash", "status"],
             timeout=5
         )
 
@@ -267,7 +271,9 @@ class MilvusStore:
                 "document_id": hit.entity.get("document_id"),
                 "chunk_type": hit.entity.get("chunk_type"),
                 "content": hit.entity.get("content"),
-                "score": hit.score  # 余弦相似度分数，范围 [-1, 1]，越接近 1 越相似
+                "content_hash": hit.entity.get("content_hash"),
+                "status": hit.entity.get("status"),
+                "score": hit.score
             }
             for hit in results[0]
         ]
