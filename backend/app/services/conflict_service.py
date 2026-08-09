@@ -7,7 +7,7 @@
 import json
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from langchain_core.messages import HumanMessage
 from sqlalchemy.orm import Session
