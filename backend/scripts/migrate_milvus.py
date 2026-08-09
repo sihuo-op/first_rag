@@ -55,8 +55,8 @@ def main():
             try:
                 # 解析 + 切分
                 parser = get_parser(doc.file_type)
-                content = parser.parse(doc.file_path)
-                chunks = splitter.split_text(content)
+                content, _ = parser.parse(doc.file_path)
+                chunks = splitter.split(content)
 
                 # 删除旧 chunk 记录
                 db.query(DocumentChunk).filter_by(document_id=doc.id).delete()
@@ -66,30 +66,27 @@ def main():
                 texts = []
                 metadata_list = []
                 for chunk in chunks:
-                    for chunk_type in ['large', 'medium', 'small']:
-                        texts.append(chunk[chunk_type])
-                        metadata_list.append({
-                            "document_id": doc.id,
-                            "chunk_type": chunk_type,
-                            "content_hash": hashlib.sha256(chunk[chunk_type].encode("utf-8")).hexdigest()
-                        })
+                    text = chunk["content"]
+                    texts.append(text)
+                    metadata_list.append({
+                        "document_id": doc.id,
+                        "chunk_type": chunk["chunk_type"],
+                        "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    })
                 milvus_ids = vector_store.add_texts("chunks", texts, metadata_list)
 
                 # 写入 PG
-                idx = 0
-                for chunk_idx, chunk in enumerate(chunks):
-                    for chunk_type in ['large', 'medium', 'small']:
-                        db_chunk = DocumentChunk(
-                            document_id=doc.id,
-                            content=chunk[chunk_type],
-                            chunk_type=getattr(__import__('app.entities.database', fromlist=['ChunkType']).ChunkType, chunk_type.upper()),
-                            position=chunk_idx,
-                            milvus_id=milvus_ids[idx],
-                            content_hash=metadata_list[idx]["content_hash"],
-                            status="active"
-                        )
-                        db.add(db_chunk)
-                        idx += 1
+                for idx, chunk in enumerate(chunks):
+                    db_chunk = DocumentChunk(
+                        document_id=doc.id,
+                        content=chunk["content"],
+                        chunk_type=getattr(__import__('app.entities.database', fromlist=['ChunkType']).ChunkType, chunk["chunk_type"].upper()),
+                        position=chunk.get("position", idx),
+                        milvus_id=milvus_ids[idx],
+                        content_hash=metadata_list[idx]["content_hash"],
+                        status="active"
+                    )
+                    db.add(db_chunk)
                 db.commit()
                 print(f"    -> {len(texts)} chunks reinserted")
             except Exception as e:
