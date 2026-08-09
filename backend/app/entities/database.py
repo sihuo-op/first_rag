@@ -119,6 +119,12 @@ class Document(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    # ============ 新增：冲突检测状态 ============
+    conflict_check_status = Column(String(20), default="completed", nullable=False)
+    conflict_check_started_at = Column(DateTime(timezone=True), nullable=True)
+    conflict_check_completed_at = Column(DateTime(timezone=True), nullable=True)
+    conflict_check_progress = Column(String(20), nullable=True)
+
     user = relationship("User", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
 
@@ -152,8 +158,34 @@ class DocumentChunk(Base):
     milvus_id = Column(String(100))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # ============ 新增：chunk 生命周期字段 ============
+    # 增量更新 & 状态镜像
+    content_hash = Column(String(64), nullable=True, index=True)
+    status = Column(String(20), default="active", nullable=False, index=True)
+
+    # 冲突作废元数据
+    conflict_with_chunk_id = Column(String(100), nullable=True)
+    conflict_detected_at = Column(DateTime(timezone=True), nullable=True)
+    confidence = Column(Float, nullable=True)
+    review_reason = Column(Text, nullable=True)
+    superseded_at = Column(DateTime(timezone=True), nullable=True)
+    reviewed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # 命中统计（高频写）
+    access_count = Column(Integer, default=0, nullable=False)
+    last_accessed_at = Column(DateTime(timezone=True), nullable=True)
+    hit_count = Column(Integer, default=0, nullable=False)
+    total_score = Column(Float, default=0.0, nullable=False)
+    avg_score = Column(Float, default=0.0, nullable=False)
+
+    # 冷知识归档
+    archived_reason = Column(String(30), nullable=True)
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+
     document = relationship("Document", back_populates="chunks")
     parent_chunk = relationship("DocumentChunk", remote_side=[id])
+    reviewer = relationship("User", foreign_keys=[reviewed_by])
 
 
 class Conversation(Base):
