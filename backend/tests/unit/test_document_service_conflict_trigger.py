@@ -47,7 +47,11 @@ def _make_service_with_mocks(doc_id: int, with_conflict_service: bool = True):
     svc.retriever = None
     svc.conflict_service = conflict_service
     svc.splitter = MagicMock()
-    svc.splitter.split_text.return_value = [{"large": "L", "medium": "M", "small": "S"}]
+    svc.splitter.split.return_value = [
+        {"content": "L", "chunk_type": "large", "position": 0},
+        {"content": "M", "chunk_type": "medium", "position": 0},
+        {"content": "S", "chunk_type": "small", "position": 0},
+    ]
     return svc, db, vector_store, document
 
 
@@ -57,7 +61,7 @@ def test_process_document_registers_conflict_detection_when_service_present():
     background_tasks = MagicMock()
 
     with patch("app.services.document_service.get_parser") as mock_get_parser:
-        mock_get_parser.return_value.parse.return_value = "fake content"
+        mock_get_parser.return_value.parse.return_value = ("fake content", {})
         result = svc.process_document(42, background_tasks)
 
     assert result is True
@@ -73,7 +77,7 @@ def test_process_document_skips_conflict_detection_when_no_service():
     background_tasks = MagicMock()
 
     with patch("app.services.document_service.get_parser") as mock_get_parser:
-        mock_get_parser.return_value.parse.return_value = "fake content"
+        mock_get_parser.return_value.parse.return_value = ("fake content", {})
         result = svc.process_document(42, background_tasks)
 
     assert result is True
@@ -87,7 +91,7 @@ def test_process_document_skips_conflict_detection_when_no_background_tasks():
     svc, _, _, document = _make_service_with_mocks(doc_id=42, with_conflict_service=True)
 
     with patch("app.services.document_service.get_parser") as mock_get_parser:
-        mock_get_parser.return_value.parse.return_value = "fake content"
+        mock_get_parser.return_value.parse.return_value = ("fake content", {})
         result = svc.process_document(42, background_tasks=None)
 
     assert result is True

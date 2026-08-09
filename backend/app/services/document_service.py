@@ -144,41 +144,37 @@ class DocumentService:
 
         try:
             parser = get_parser(document.file_type)
-            content = parser.parse(document.file_path)
+            content, _ = parser.parse(document.file_path)
 
-            chunks = self.splitter.split_text(content)
+            chunks = self.splitter.split(content)
 
             if not self.vector_store.has_collection("chunks"):
                 self.vector_store.create_collection("chunks")
 
             texts = []
             metadata_list = []
-            for i, chunk in enumerate(chunks):
-                for chunk_type in ['large', 'medium', 'small']:
-                    text = chunk[chunk_type]
-                    texts.append(text)
-                    metadata_list.append({
-                        "document_id": doc_id,
-                        "chunk_type": chunk_type,
-                        "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest()
-                    })
+            for chunk in chunks:
+                text = chunk["content"]
+                texts.append(text)
+                metadata_list.append({
+                    "document_id": doc_id,
+                    "chunk_type": chunk["chunk_type"],
+                    "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest()
+                })
 
             milvus_ids = self.vector_store.add_texts("chunks", texts, metadata_list)
 
-            idx = 0
-            for i, chunk in enumerate(chunks):
-                for chunk_type in ['large', 'medium', 'small']:
-                    db_chunk = DocumentChunk(
-                        document_id=doc_id,
-                        content=chunk[chunk_type],
-                        chunk_type=getattr(ChunkType, chunk_type.upper()),
-                        position=i,
-                        milvus_id=milvus_ids[idx],
-                        content_hash=metadata_list[idx]["content_hash"],
-                        status="active"
-                    )
-                    self.db.add(db_chunk)
-                    idx += 1
+            for idx, chunk in enumerate(chunks):
+                db_chunk = DocumentChunk(
+                    document_id=doc_id,
+                    content=chunk["content"],
+                    chunk_type=getattr(ChunkType, chunk["chunk_type"].upper()),
+                    position=chunk.get("position", idx),
+                    milvus_id=milvus_ids[idx],
+                    content_hash=metadata_list[idx]["content_hash"],
+                    status="active"
+                )
+                self.db.add(db_chunk)
 
             document.status = DocumentStatus.COMPLETED
             self.db.commit()
