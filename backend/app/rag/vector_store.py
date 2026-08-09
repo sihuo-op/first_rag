@@ -355,6 +355,43 @@ class MilvusStore:
     def delete_memory_vectors(self, collection_name: str, memory_id: int) -> None:
         self.delete_vectors(collection_name, filter_expr=f"memory_id == {int(memory_id)}")
 
+    def upsert_status(self, collection_name: str, chunk_id: str, status: str) -> None:
+        """
+        更新指定 chunk 的 status（低频操作，用于冲突作废/归档/回滚）
+
+        Milvus upsert 需要提供完整行，所以先 query 拿到原数据，改 status 后整体 upsert。
+
+        Args:
+            collection_name: 集合名
+            chunk_id: chunk 的 id（VARCHAR 主键）
+            status: 新状态（active / superseded / pending_review / archived）
+        """
+        self.connect()
+        full_name = self._get_full_name(collection_name)
+        collection = self._get_collection(full_name)
+
+        # 查出完整行
+        results = collection.query(
+            expr=f'id == "{chunk_id}"',
+            output_fields=["id", "document_id", "chunk_type", "content", "content_hash", "status", "embedding"],
+            timeout=5
+        )
+        if not results:
+            raise MilvusException(f"Chunk {chunk_id} not found in {full_name}")
+
+        row = results[0]
+        # upsert（delete + insert）
+        collection.upsert([{
+            "id": row["id"],
+            "document_id": row["document_id"],
+            "chunk_type": row["chunk_type"],
+            "content": row["content"],
+            "content_hash": row["content_hash"],
+            "status": status,
+            "embedding": row["embedding"]
+        }])
+        collection.flush()
+
     def delete_vectors(self, collection_name: str, ids: Optional[List[str]] = None, filter_expr: Optional[str] = None) -> None:
         """
         删除向量（根据 ID 或过滤条件）
