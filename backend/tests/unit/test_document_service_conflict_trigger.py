@@ -1,8 +1,6 @@
 """测试 DocumentService.process_document 触发冲突检测后台任务的逻辑。
 
 仅验证触发行为，不验证文档处理全流程（用 mock 跳过解析/切分/向量库）。
-注意：document_service.py 存在已知 field drift（DocumentStatus.ACTIVE 不存在），
-本测试不修复 drift，只在 conftest 里给 DocumentStatus 加 ACTIVE 别名让代码可执行。
 """
 import sys
 from pathlib import Path
@@ -12,18 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from app.entities.database import DocumentStatus
 from app.services.document_service import DocumentService
-
-
-@pytest.fixture(autouse=True)
-def _patch_document_status_active():
-    """document_service.py 引用了 DocumentStatus.ACTIVE，但 ORM 枚举只有 PENDING/PROCESSING/COMPLETED/FAILED。
-    这是已知的 field drift，Task 14 不修复。这里临时给 ACTIVE 加个别名让 process_document 能跑通。"""
-    if not hasattr(DocumentStatus, "ACTIVE"):
-        DocumentStatus.ACTIVE = DocumentStatus.COMPLETED
-    yield
-    # 不删除别名：其他测试若再触发也不会受影响（幂等）
 
 
 def _make_service_with_mocks(doc_id: int, with_conflict_service: bool = True):
