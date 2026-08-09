@@ -308,6 +308,13 @@ class EvaluateTool(BaseTool):
     INCORRECT = "incorrect"
     AMBIGUOUS = "ambiguous"
 
+    # Score-based fast-path 阈值（基于 bge-reranker-base 在 23 查询样本上的分布）
+    # top1 rerank_score >= HIGH -> 直接判 correct，跳过 LLM
+    # top1 rerank_score <= LOW  -> 直接判 incorrect，跳过 LLM
+    # 中间区间走 LLM 语义评估
+    HIGH_SCORE_THRESHOLD = 0.9
+    LOW_SCORE_THRESHOLD = 0.2
+
     def __init__(self, llm=None, confidence_threshold: float = 0.5):
         super().__init__(llm=llm)
         self.confidence_threshold = confidence_threshold
@@ -330,8 +337,11 @@ class EvaluateTool(BaseTool):
                 debug_info={"evaluation": {"confidence": 0.0, "grade": self.INCORRECT, "reason": "没有检索到任何文档", "method": "rule"}}
             )
 
-        # 优先 LLM 语义评估，失败时回退到规则评估
-        if self.llm:
+        # Score-based fast-path：明确高/低分直接判定，跳过 LLM
+        fast_path = self._score_fast_path_evaluate(documents)
+        if fast_path is not None:
+            evaluation = fast_path
+        elif self.llm:
             evaluation = self._llm_evaluate_chunks(question, documents)
         else:
             evaluation = self._rule_evaluate_chunks(question, documents)
@@ -355,6 +365,42 @@ class EvaluateTool(BaseTool):
             message=f"评估完成：{evaluation['grade']}，置信度 {evaluation['confidence']:.2f}",
             debug_info={"evaluation": evaluation}
         )
+
+    def _score_fast_path_evaluate(self, documents: List[Dict]) -> Dict:
+        """基于 rerank_score 的快速判定：明确高/低分跳过 LLM。
+
+        bge-reranker-base 输出已 sigmoid 归一化到 [0, 1]：
+        - top1 >= HIGH_SCORE_THRESHOLD：文档强相关，直接判 correct
+        - top1 <= LOW_SCORE_THRESHOLD：文档弱相关或无命中，直接判 incorrect
+        - 中间区间返回 None，由调用方走 LLM 评估
+        """
+        top1_score = 0.0
+        for doc in documents:
+            s = doc.get("rerank_score")
+            if s is None or s == 0:
+                s = doc.get("rrf_score", 0)
+            if s and s > top1_score:
+                top1_score = s
+
+        if top1_score >= self.HIGH_SCORE_THRESHOLD:
+            return {
+                "confidence": round(min(1.0, top1_score), 2),
+                "grade": self.CORRECT,
+                "reason": f"top1 rerank_score={top1_score:.3f} >= {self.HIGH_SCORE_THRESHOLD}，强相关",
+                "suggestion": "可直接生成答案",
+                "method": "score_fast_path_high",
+                "top1_score": round(top1_score, 4),
+            }
+        if top1_score <= self.LOW_SCORE_THRESHOLD:
+            return {
+                "confidence": round(top1_score, 2),
+                "grade": self.INCORRECT,
+                "reason": f"top1 rerank_score={top1_score:.3f} <= {self.LOW_SCORE_THRESHOLD}，弱相关或无命中",
+                "suggestion": "建议改写查询重新检索",
+                "method": "score_fast_path_low",
+                "top1_score": round(top1_score, 4),
+            }
+        return None
 
     def _llm_evaluate_chunks(self, question: str, documents: List[Dict]) -> Dict:
         """CRAG 风格的 LLM 语义评估
