@@ -3,12 +3,19 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.db.session import get_db
-from app.entities.schemas import UserResponse, DocumentResponse, UserUpdate, StatsResponse
+from app.entities.schemas import (
+    UserResponse,
+    DocumentResponse,
+    DocumentWithConflictStatusResponse,
+    UserUpdate,
+    StatsResponse,
+)
 from app.entities.database import User, Document, Conversation, ChatMessage, UserRole
 from app.core.security import get_current_admin_user
 from app.services.user_service import UserService
 from app.services.document_service import DocumentService
-from app.core.dependencies import get_vector_store
+from app.services.conflict_service import ConflictService
+from app.core.dependencies import get_vector_store, get_conflict_service
 from app.rag.vector_store import MilvusStore
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -79,15 +86,16 @@ async def delete_user(
     return {"message": "User deleted successfully"}
 
 
-@router.get("/documents", response_model=List[DocumentResponse])
+@router.get("/documents", response_model=List[DocumentWithConflictStatusResponse])
 async def list_all_documents(
     skip: int = 0,
     limit: int = 100,
     current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db),
-    vector_store: MilvusStore = Depends(get_vector_store)
+    vector_store: MilvusStore = Depends(get_vector_store),
+    conflict_service: ConflictService = Depends(get_conflict_service)
 ):
-    doc_service = DocumentService(db, vector_store)
+    doc_service = DocumentService(db, vector_store, conflict_service=conflict_service)
     return doc_service.get_documents(skip=skip, limit=limit)
 
 
@@ -96,9 +104,10 @@ async def admin_delete_document(
     doc_id: int,
     current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db),
-    vector_store: MilvusStore = Depends(get_vector_store)
+    vector_store: MilvusStore = Depends(get_vector_store),
+    conflict_service: ConflictService = Depends(get_conflict_service)
 ):
-    doc_service = DocumentService(db, vector_store)
+    doc_service = DocumentService(db, vector_store, conflict_service=conflict_service)
     success = doc_service.delete_document(doc_id)
     if not success:
         raise HTTPException(

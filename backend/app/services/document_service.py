@@ -10,6 +10,7 @@ from app.rag.parsers import get_parser
 from app.rag.splitter import ThreeLayerSplitter
 from app.rag.vector_store import MilvusStore
 from app.rag.retriever import HybridRetriever
+from app.services.conflict_service import ConflictService
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -23,7 +24,7 @@ class DocumentService:
 
     处理流程：
     1. upload_document: 保存文件到磁盘，创建数据库记录
-    2. process_document: 解析文档内容 → 三层切分 → 向量化 → 存入 Milvus + BM25 索引
+    2. process_document: 解析文档内容 -> 三层切分 -> 向量化 -> 存入 Milvus + BM25 索引
     3. delete_document: 清理向量库、BM25 索引、删除文件、删除数据库记录
 
     三层切分策略：
@@ -45,7 +46,8 @@ class DocumentService:
         self,
         db: Session,
         vector_store: MilvusStore,
-        retriever: HybridRetriever = None
+        retriever: HybridRetriever = None,
+        conflict_service: ConflictService = None
     ):
         """
         初始化文档服务
@@ -54,10 +56,12 @@ class DocumentService:
             db: 数据库会话
             vector_store: 向量存储实例（集成 embedding）
             retriever: 混合检索器实例（可选，用于检索）
+            conflict_service: 冲突检测服务实例（可选，用于上传后触发冲突检测）
         """
         self.db = db
         self.vector_store = vector_store
         self.retriever = retriever
+        self.conflict_service = conflict_service
         self.splitter = ThreeLayerSplitter()
 
     def get_documents(self, user_id: Optional[int] = None, skip: int = 0, limit: int = 100) -> List[Document]:
@@ -117,18 +121,19 @@ class DocumentService:
         self.db.refresh(db_document)
 
         if background_tasks:
-            background_tasks.add_task(self.process_document, db_document.id)
+            background_tasks.add_task(self.process_document, db_document.id, background_tasks)
         else:
             self.process_document(db_document.id)
 
         return db_document
 
-    def process_document(self, doc_id: int) -> bool:
+    def process_document(self, doc_id: int, background_tasks=None) -> bool:
         """
-        处理文档：解析 → 切分 → 向量化 → 存储
+        处理文档：解析 -> 切分 -> 向量化 -> 存储
 
         Args:
             doc_id: 文档 ID
+            background_tasks: 后台任务处理器（用于触发冲突检测）
 
         Returns:
             处理是否成功
@@ -177,12 +182,32 @@ class DocumentService:
 
             document.status = DocumentStatus.ACTIVE
             self.db.commit()
+
+            # 触发冲突检测（后台任务）
+            if self.conflict_service and background_tasks:
+                # 标记文档待检测
+                document.conflict_check_status = "pending"
+                self.db.commit()
+                background_tasks.add_task(self._run_conflict_detection, doc_id)
+
             return True
 
         except Exception as e:
             document.status = DocumentStatus.FAILED
             self.db.commit()
             raise e
+
+    def _run_conflict_detection(self, doc_id: int):
+        """后台执行冲突检测（独立 db session）"""
+        from app.db.session import SessionLocal
+        db = SessionLocal()
+        try:
+            svc = ConflictService(db, self.vector_store)
+            svc.detect_for_document(doc_id)
+        except Exception as e:
+            print(f"[DocumentService] conflict detection failed for doc {doc_id}: {e}")
+        finally:
+            db.close()
 
     def delete_document(self, doc_id: int) -> bool:
         """

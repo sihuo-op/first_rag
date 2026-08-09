@@ -6,7 +6,8 @@ from app.entities.schemas import DocumentResponse, DocumentUpdate
 from app.entities.database import User
 from app.core.security import get_current_active_user
 from app.services.document_service import DocumentService
-from app.core.dependencies import get_vector_store, get_retriever
+from app.services.conflict_service import ConflictService
+from app.core.dependencies import get_vector_store, get_retriever, get_conflict_service
 from app.rag.vector_store import MilvusStore
 from app.rag.retriever import HybridRetriever
 
@@ -16,9 +17,10 @@ router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 def get_document_service(
     db: Session = Depends(get_db),
     vector_store: MilvusStore = Depends(get_vector_store),
-    retriever: HybridRetriever = Depends(get_retriever)
+    retriever: HybridRetriever = Depends(get_retriever),
+    conflict_service: ConflictService = Depends(get_conflict_service)
 ) -> DocumentService:
-    return DocumentService(db, vector_store, retriever)
+    return DocumentService(db, vector_store, retriever, conflict_service=conflict_service)
 
 
 @router.get("", response_model=List[DocumentResponse])

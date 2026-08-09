@@ -1,8 +1,13 @@
 import threading
 
+from fastapi import Depends
+from sqlalchemy.orm import Session
+
 from app.core.config import get_settings
+from app.db.session import get_db
 from app.rag.vector_store import MilvusStore
 from app.rag.retriever import HybridRetriever, SparseRetriever
+from app.services.conflict_service import ConflictService
 
 _settings = get_settings()
 _singleton_lock = threading.RLock()
@@ -53,3 +58,11 @@ def get_retriever() -> HybridRetriever:
                     top_n=_settings.RERANKER_TOP_N
                 )
     return _retriever_instance
+
+
+def get_conflict_service(
+    db: Session = Depends(get_db),
+    vector_store: MilvusStore = Depends(get_vector_store)
+) -> ConflictService:
+    """获取 ConflictService 实例（每请求新建，绑定到当前 db session）"""
+    return ConflictService(db, vector_store)
