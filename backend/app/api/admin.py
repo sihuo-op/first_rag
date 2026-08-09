@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -9,8 +9,9 @@ from app.entities.schemas import (
     DocumentWithConflictStatusResponse,
     UserUpdate,
     StatsResponse,
+    ChunkDetailResponse,
 )
-from app.entities.database import User, Document, Conversation, ChatMessage, UserRole
+from app.entities.database import User, Document, DocumentChunk, Conversation, ChatMessage, UserRole
 from app.core.security import get_current_admin_user
 from app.services.user_service import UserService
 from app.services.document_service import DocumentService
@@ -97,6 +98,35 @@ async def list_all_documents(
 ):
     doc_service = DocumentService(db, vector_store, conflict_service=conflict_service)
     return doc_service.get_documents(skip=skip, limit=limit)
+
+
+@router.get("/chunks", response_model=List[ChunkDetailResponse])
+async def list_chunks(
+    status: Optional[str] = None,
+    archived_reason: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """列出 chunks，可按 status / archived_reason 过滤"""
+    query = db.query(DocumentChunk)
+    if status:
+        query = query.filter(DocumentChunk.status == status)
+    if archived_reason:
+        query = query.filter(DocumentChunk.archived_reason == archived_reason)
+    chunks = query.order_by(DocumentChunk.id.desc()).offset(skip).limit(limit).all()
+
+    # join conflict_with_chunk 的 content（用于 pending_review / superseded 展示新 chunk 内容）
+    result = []
+    for c in chunks:
+        item = ChunkDetailResponse.model_validate(c)
+        if c.conflict_with_chunk_id:
+            new_chunk = db.query(DocumentChunk).filter_by(milvus_id=c.conflict_with_chunk_id).first()
+            if new_chunk:
+                item.conflict_with_content = new_chunk.content
+        result.append(item)
+    return result
 
 
 @router.delete("/documents/{doc_id}")
