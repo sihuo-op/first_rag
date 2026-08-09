@@ -190,8 +190,11 @@ class ConflictService:
                 old_chunk.confidence = confidence
                 old_chunk.review_reason = f"auto:conflict_with:{new_chunk.milvus_id}:{j['reason']}"
                 self.db.commit()
-                # 同步 Milvus
-                self.vector_store.upsert_status("chunks", old_milvus_id, "superseded")
+                # 同步 Milvus（失败仅记日志，PG 为准，可后续 re-sync）
+                try:
+                    self.vector_store.upsert_status("chunks", old_milvus_id, "superseded")
+                except Exception as e:
+                    print(f"[ConflictService] Milvus sync failed for chunk {old_chunk.id} (superseded): {e}")
                 print(f"[ConflictService] auto-superseded chunk {old_chunk.id} (confidence={confidence:.2f})")
             elif confidence >= low_threshold:
                 # 转人工
@@ -201,5 +204,8 @@ class ConflictService:
                 old_chunk.confidence = confidence
                 old_chunk.review_reason = f"review:conflict_with:{new_chunk.milvus_id}:{j['reason']}"
                 self.db.commit()
-                self.vector_store.upsert_status("chunks", old_milvus_id, "pending_review")
+                try:
+                    self.vector_store.upsert_status("chunks", old_milvus_id, "pending_review")
+                except Exception as e:
+                    print(f"[ConflictService] Milvus sync failed for chunk {old_chunk.id} (pending_review): {e}")
                 print(f"[ConflictService] pending_review chunk {old_chunk.id} (confidence={confidence:.2f})")

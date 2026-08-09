@@ -119,3 +119,78 @@ def test_detect_for_single_chunk_pending_review_on_medium_confidence():
 
     assert old_chunk.status == "pending_review"
     svc.vector_store.upsert_status.assert_called_once_with("chunks", "old1", "pending_review")
+
+
+def test_detect_for_single_chunk_swallows_milvus_failure_on_auto_supersede():
+    """高置信度自动作废时，Milvus 同步失败不应抛异常（PG 已 commit）。"""
+    from unittest.mock import MagicMock
+
+    svc = ConflictService.__new__(ConflictService)
+    svc.settings = MagicMock()
+    svc.settings.CONFLICT_DETECTION_HIGH_CONFIDENCE = 0.85
+    svc.settings.CONFLICT_DETECTION_LOW_CONFIDENCE = 0.5
+
+    new_chunk = MagicMock()
+    new_chunk.milvus_id = "new1"
+    new_chunk.content = "新内容"
+
+    old_chunk = MagicMock()
+    old_chunk.id = 100
+    old_chunk.milvus_id = "old1"
+    old_chunk.status = "active"
+
+    svc.db = MagicMock()
+    svc.db.query.return_value.filter_by.return_value.first.return_value = old_chunk
+    svc.vector_store = MagicMock()
+    svc.vector_store.embed_query.return_value = [0.1] * 1024
+    svc.vector_store.search_vectors.return_value = [{"id": "old1", "content": "旧内容"}]
+    svc.vector_store.upsert_status.side_effect = RuntimeError("milvus down")
+    svc.judge_conflicts = MagicMock(return_value=[
+        {"old_id": "old1", "conflict": True, "confidence": 0.92, "reason": "结论矛盾"}
+    ])
+
+    # 不应抛异常
+    svc._detect_for_single_chunk(new_chunk, new_doc_id=999)
+
+    # PG 状态仍正确（commit 已发生）
+    assert old_chunk.status == "superseded"
+    assert old_chunk.confidence == 0.92
+    svc.vector_store.upsert_status.assert_called_once_with("chunks", "old1", "superseded")
+    svc.db.commit.assert_called()
+
+
+def test_detect_for_single_chunk_swallows_milvus_failure_on_pending_review():
+    """中置信度转人工时，Milvus 同步失败不应抛异常（PG 已 commit）。"""
+    from unittest.mock import MagicMock
+
+    svc = ConflictService.__new__(ConflictService)
+    svc.settings = MagicMock()
+    svc.settings.CONFLICT_DETECTION_HIGH_CONFIDENCE = 0.85
+    svc.settings.CONFLICT_DETECTION_LOW_CONFIDENCE = 0.5
+
+    new_chunk = MagicMock()
+    new_chunk.milvus_id = "new1"
+    new_chunk.content = "新内容"
+
+    old_chunk = MagicMock()
+    old_chunk.id = 100
+    old_chunk.milvus_id = "old1"
+    old_chunk.status = "active"
+
+    svc.db = MagicMock()
+    svc.db.query.return_value.filter_by.return_value.first.return_value = old_chunk
+    svc.vector_store = MagicMock()
+    svc.vector_store.embed_query.return_value = [0.1] * 1024
+    svc.vector_store.search_vectors.return_value = [{"id": "old1", "content": "旧内容"}]
+    svc.vector_store.upsert_status.side_effect = RuntimeError("milvus down")
+    svc.judge_conflicts = MagicMock(return_value=[
+        {"old_id": "old1", "conflict": True, "confidence": 0.6, "reason": "可能冲突"}
+    ])
+
+    # 不应抛异常
+    svc._detect_for_single_chunk(new_chunk, new_doc_id=999)
+
+    # PG 状态仍正确
+    assert old_chunk.status == "pending_review"
+    svc.vector_store.upsert_status.assert_called_once_with("chunks", "old1", "pending_review")
+    svc.db.commit.assert_called()
