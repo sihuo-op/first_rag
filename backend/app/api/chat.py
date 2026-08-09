@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -102,6 +102,7 @@ async def get_messages(
 @router.post("/chat")
 async def chat(
     request: ChatRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
     chat_service: ChatService = Depends(get_chat_service)
 ):
@@ -111,21 +112,24 @@ async def chat(
             chat_service.agentic_chat_stream(
                 user_id=current_user.id,
                 query=request.query,
-                conv_id=request.conversation_id
+                conv_id=request.conversation_id,
+                background_tasks=background_tasks
             ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no"
-            }
+            },
+            background=background_tasks
         )
 
     try:
         result = await chat_service.agentic_chat(
             user_id=current_user.id,
             query=request.query,
-            conv_id=request.conversation_id
+            conv_id=request.conversation_id,
+            background_tasks=background_tasks
         )
         return ChatResponse(**result)
     except ValueError as e:

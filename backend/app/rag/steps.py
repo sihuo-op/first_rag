@@ -86,6 +86,7 @@ class RetrieveTool(BaseTool):
         try:
             chunks, debug_info = self.retriever.retrieve(query=query, top_k=top_k)
             documents = [{
+                "id": c.get("id"),
                 "content": c.get("content", ""),
                 "score": c.get("rrf_score", 0) or c.get("rerank_score", 0),
                 "chunk_type": c.get("chunk_type", "unknown"),

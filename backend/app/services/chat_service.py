@@ -189,7 +189,8 @@ class ChatService:
         user_id: int,
         query: str,
         conv_id: Optional[int] = None,
-        max_attempts: int = 2
+        max_attempts: int = 2,
+        background_tasks=None
     ) -> Dict[str, Any]:
         """
         Agentic RAG 对话（ReAct Commander 模式）
@@ -202,6 +203,7 @@ class ChatService:
             query: 用户问题
             conv_id: 会话ID（可选）
             max_attempts: RAGGraph 最大迭代次数
+            background_tasks: FastAPI BackgroundTasks，用于 fire-and-forget 写 chunk 统计
 
         Returns:
             包含回答和执行过程的字典
@@ -301,6 +303,11 @@ class ChatService:
             sub_tasks = []
             decomposed_tasks = []
             mode = "parallel_rag_tools"
+
+        # 注册 chunk 统计更新（fire-and-forget）
+        # 检索在 agent 内部完成（可能跨 asyncio.to_thread），不便透传 BackgroundTasks，
+        # 因此在 agent 完成后用最终 documents 触发统计更新。
+        self._schedule_stats_update(background_tasks, documents)
 
         # 计算处理时间
         process_time = time.time() - start_time
@@ -402,6 +409,44 @@ class ChatService:
         except RuntimeError:
             self._extract_memory_with_new_session(user_id, conv_id, query, answer)
 
+    def _schedule_stats_update(self, background_tasks, documents: List[Dict[str, Any]]) -> None:
+        """
+        注册 chunk 统计更新（fire-and-forget）。
+
+        优先使用 FastAPI BackgroundTasks（响应发送后执行）。
+        若 background_tasks 不可用（非 API 调用），回退到 asyncio.create_task
+        在独立线程中执行；若无事件循环则同步执行。
+
+        documents 保留完整字段（rerank_score/rrf_score/dense_score），
+        由 _update_stats_wrapper 归一化为单一 score。
+        """
+        if not documents:
+            return
+        # 只更新有 id 的文档（id 即 Milvus chunk id），保留 score 字段供归一化
+        hits = [d for d in documents if d.get("id")]
+        if not hits:
+            return
+
+        if background_tasks is not None:
+            background_tasks.add_task(HybridRetriever._update_stats_wrapper, hits)
+            return
+
+        # 回退：无 BackgroundTasks 时用 asyncio.to_thread 异步执行
+        async def _run_stats():
+            try:
+                await asyncio.to_thread(HybridRetriever._update_stats_wrapper, hits)
+            except Exception as e:
+                print(f"Chunk stats update error: {e}")
+
+        try:
+            asyncio.create_task(_run_stats())
+        except RuntimeError:
+            # 无事件循环，同步执行
+            try:
+                HybridRetriever._update_stats_wrapper(hits)
+            except Exception as e:
+                print(f"Chunk stats update (sync) error: {e}")
+
     def _extract_memory_with_new_session(self, user_id: int, conv_id: int, query: str, answer: str) -> None:
         db = SessionLocal()
         try:
@@ -418,7 +463,8 @@ class ChatService:
         user_id: int,
         query: str,
         conv_id: Optional[int] = None,
-        max_attempts: int = 2
+        max_attempts: int = 2,
+        background_tasks=None
     ) -> AsyncGenerator[str, None]:
         """
         Agentic RAG 对话（流式输出版本）
@@ -430,6 +476,7 @@ class ChatService:
             query: 用户问题
             conv_id: 会话ID（可选）
             max_attempts: RAGGraph 最大迭代次数
+            background_tasks: FastAPI BackgroundTasks，用于 fire-and-forget 写 chunk 统计
 
         Yields:
             SSE 格式的数据块
@@ -513,6 +560,10 @@ class ChatService:
             standalone_query = standalone_query if 'standalone_query' in locals() else query
             result = {"answer": "抱歉，处理您的问题时出现了错误。"}
             yield self._sse_event({"type": "error", "message": str(e)})
+
+        # 注册 chunk 统计更新（fire-and-forget）
+        # 检索在 agent 内部完成（跨 asyncio.to_thread），在 agent 完成后用最终 documents 触发。
+        self._schedule_stats_update(background_tasks, documents)
 
         full_answer = ""
         generation_time = 0

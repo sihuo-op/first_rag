@@ -6,6 +6,7 @@
 
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 import threading
 import time
 import jieba
@@ -158,7 +159,7 @@ class HybridRetriever(BaseRetriever):
 
         self.vector_store.connect()
 
-    def retrieve(self, query: str, top_k: int = 10) -> tuple:
+    def retrieve(self, query: str, top_k: int = 10, background_tasks=None) -> tuple:
         debug_info = {
             "query": query,
             "steps": [],
@@ -261,7 +262,29 @@ class HybridRetriever(BaseRetriever):
             debug_info["rerank_used"] = True
         debug_info["steps"].append({"step": "rerank", "desc": "CrossEncoder 重排序", "count": len(unique_results), "time_s": round(rerank_time, 3)})
 
+        # 注册统计更新（fire-and-forget）
+        # db session 在 wrapper 内部创建，避免注册时创建到执行时过期
+        if background_tasks is not None and unique_results:
+            background_tasks.add_task(self._update_stats_wrapper, unique_results)
+
         return unique_results, debug_info
+
+    @staticmethod
+    def _update_stats_wrapper(hits):
+        """包装器：创建独立 db session，执行统计更新，关闭"""
+        from app.db.session import SessionLocal
+        db = SessionLocal()
+        try:
+            # 归一化分数字段：优先 rerank_score，其次 rrf_score，最后 0
+            normalized = []
+            for h in hits:
+                normalized.append({
+                    "id": h.get("id"),
+                    "score": h.get("rerank_score") or h.get("rrf_score") or h.get("dense_score") or 0.0
+                })
+            update_chunk_stats(db, normalized)
+        finally:
+            db.close()
 
     def _merge_with_rrf(self, dense_results: List[Dict], sparse_results: List[Dict], top_k: int) -> List[Dict]:
         """
@@ -309,3 +332,25 @@ class HybridRetriever(BaseRetriever):
 
     def remove_from_sparse_index(self, document_id: int) -> None:
         self.sparse_retriever.remove_documents(document_id)
+
+
+def update_chunk_stats(db, hits):
+    """
+    检索命中后更新 chunk 统计（access_count / last_accessed_at / total_score / avg_score）。
+    由 BackgroundTasks 调用，fire-and-forget。
+    """
+    from app.entities.database import DocumentChunk
+    for hit in hits:
+        chunk = db.query(DocumentChunk).filter_by(milvus_id=hit.get("id")).first()
+        if not chunk:
+            continue
+        chunk.access_count += 1
+        chunk.last_accessed_at = datetime.utcnow()
+        chunk.hit_count += 1
+        chunk.total_score += float(hit.get("score", 0.0))
+        chunk.avg_score = chunk.total_score / chunk.hit_count if chunk.hit_count > 0 else 0.0
+    try:
+        db.commit()
+    except Exception as e:
+        print(f"[update_chunk_stats] failed: {e}")
+        db.rollback()
