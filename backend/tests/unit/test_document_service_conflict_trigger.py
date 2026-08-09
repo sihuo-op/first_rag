@@ -115,3 +115,59 @@ def test_run_conflict_detection_swallows_exceptions():
         svc._run_conflict_detection(99)
 
     fake_session.close.assert_called_once()
+
+
+def test_upload_document_schedules_process_document_with_background_tasks():
+    """upload_document 接收 background_tasks 时，应注册 process_document 后台任务（携带 background_tasks 参数，确保冲突检测能被触发）。"""
+    from unittest.mock import AsyncMock
+
+    svc, db, vector_store, document = _make_service_with_mocks(doc_id=77, with_conflict_service=True)
+    background_tasks = MagicMock()
+
+    fake_file = MagicMock()
+    fake_file.filename = "fake.md"
+    fake_file.read = AsyncMock(return_value=b"hello")
+
+    with patch("app.services.document_service.settings") as mocked_settings, \
+         patch("os.makedirs"), \
+         patch("builtins.open"), \
+         patch("app.services.document_service.Document") as mock_doc_cls:
+        mocked_settings.allowed_extensions = [".md"]
+        mocked_settings.upload_dir = "/tmp/uploads"
+        mock_doc_cls.return_value = document
+
+        import asyncio
+        asyncio.run(svc.upload_document(fake_file, user_id=1, background_tasks=background_tasks))
+
+    # upload_document 应当注册 process_document（携带 background_tasks），而不是同步执行
+    background_tasks.add_task.assert_called_with(svc.process_document, document.id, background_tasks)
+    # db.add / db.commit 被调用（持久化 document）
+    assert db.add.called
+    assert db.commit.called
+
+
+def test_upload_document_runs_synchronously_without_background_tasks():
+    """upload_document 没有 background_tasks 时，应同步调用 process_document（不会调度后台任务）。"""
+    from unittest.mock import AsyncMock
+
+    svc, db, vector_store, document = _make_service_with_mocks(doc_id=88, with_conflict_service=True)
+
+    fake_file = MagicMock()
+    fake_file.filename = "fake.md"
+    fake_file.read = AsyncMock(return_value=b"hello")
+
+    with patch("app.services.document_service.settings") as mocked_settings, \
+         patch("os.makedirs"), \
+         patch("builtins.open"), \
+         patch("app.services.document_service.Document") as mock_doc_cls, \
+         patch.object(svc, "process_document") as mock_process:
+        mocked_settings.allowed_extensions = [".md"]
+        mocked_settings.upload_dir = "/tmp/uploads"
+        mock_doc_cls.return_value = document
+
+        import asyncio
+        asyncio.run(svc.upload_document(fake_file, user_id=1, background_tasks=None))
+
+    # 同步调用 process_document，且未传递 background_tasks
+    mock_process.assert_called_once_with(document.id)
+

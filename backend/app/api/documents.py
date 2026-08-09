@@ -56,8 +56,7 @@ async def upload_document(
     current_user: User = Depends(get_current_active_user),
     doc_service: DocumentService = Depends(get_document_service)
 ):
-    document = await doc_service.upload_document(file, current_user.id, title)
-    background_tasks.add_task(doc_service.process_document, document.id)
+    document = await doc_service.upload_document(file, current_user.id, title, background_tasks=background_tasks)
     return document
 
 
