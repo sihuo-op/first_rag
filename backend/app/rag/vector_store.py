@@ -252,18 +252,26 @@ class MilvusStore:
         # 默认只检索 active chunk
         effective_filter = filter_expr if filter_expr is not None else "status == 'active'"
 
-        results = collection.search(
-            data=[query_vector],
-            anns_field="embedding",
-            param={
-                "metric_type": "COSINE",
-                "params": {"nprobe": 10}
-            },
-            limit=top_k,
-            expr=effective_filter,
-            output_fields=["id", "document_id", "chunk_type", "content", "content_hash", "status"],
-            timeout=5
-        )
+        try:
+            results = collection.search(
+                data=[query_vector],
+                anns_field="embedding",
+                param={
+                    "metric_type": "COSINE",
+                    "params": {"nprobe": 10}
+                },
+                limit=top_k,
+                expr=effective_filter,
+                output_fields=["id", "document_id", "chunk_type", "content", "content_hash", "status"],
+                timeout=5
+            )
+        except MilvusException as e:
+            # pymilvus 2.6.x 客户端在 0-hit 搜索时触发 "Unsupported field type: 0" bug
+            # （服务端返回 type=0 的空 field_data，HybridHits 解析失败）
+            # 0-hit 即无结果，等价于返回 []
+            if "Unsupported field type: 0" in (str(e.code) + str(e.message)):
+                return []
+            raise
 
         return [
             {
