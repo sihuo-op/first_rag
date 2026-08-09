@@ -111,6 +111,23 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE: int = 52428800
     ALLOWED_EXTENSIONS: str = "pdf,txt,docx,md"
 
+    # Chunk 生命周期配置
+    # 冲突检测：高置信度自动作废，低置信度转人工审核
+    CONFLICT_DETECTION_HIGH_CONFIDENCE: float = 0.85
+    CONFLICT_DETECTION_LOW_CONFIDENCE: float = 0.5
+
+    # 冷知识识别规则
+    COLD_KNOWLEDGE_TIMEOUT_DAYS: int = 90              # last_accessed_at 超过此天数归档
+    COLD_KNOWLEDGE_LOW_FREQ_THRESHOLD: int = 2         # access_count 低于此值
+    COLD_KNOWLEDGE_LOW_FREQ_MIN_DAYS: int = 30         # 上传超过此天数才适用频次规则
+    COLD_KNOWLEDGE_LOW_QUALITY_SCORE: float = 0.3      # avg_score 低于此值
+    COLD_KNOWLEDGE_LOW_QUALITY_MIN_HITS: int = 5       # hit_count 达到此值才适用质量规则
+    COLD_KNOWLEDGE_ARCHIVE_RETENTION_DAYS: int = 90    # 归档后保留天数，过期硬删
+
+    # 调度 cron
+    COLD_KNOWLEDGE_SWEEP_CRON: str = "0 3 * * *"       # 冷知识扫描（每天 3 点）
+    HARD_DELETE_SWEEP_CRON: str = "0 4 * * *"          # 硬删除扫描（每天 4 点）
+
     UPLOAD_DIR: str = "./data/uploads"
     SQLITE_DIR: str = "./data/sqlite"
 
