@@ -76,7 +76,7 @@ class DocumentService:
         Returns:
             文档列表
         """
-        query = self.db.query(Document).filter(Document.status == DocumentStatus.ACTIVE)
+        query = self.db.query(Document).filter(Document.status == DocumentStatus.COMPLETED)
         if user_id is not None:
             query = query.filter(Document.user_id == user_id)
         return query.order_by(Document.created_at.desc()).offset(skip).limit(limit).all()
@@ -180,7 +180,7 @@ class DocumentService:
                     self.db.add(db_chunk)
                     idx += 1
 
-            document.status = DocumentStatus.ACTIVE
+            document.status = DocumentStatus.COMPLETED
             self.db.commit()
 
             # 触发冲突检测（后台任务）
