@@ -122,6 +122,8 @@ class MilvusStore:
         - document_id: 所属文档 ID
         - chunk_type: 切分类型（LARGE/MEDIUM/SMALL）
         - content: 原始文本内容
+        - content_hash: 内容哈希，用于去重和冲突检测
+        - status: 状态（active/draft/archived/cold）
         - embedding: 向量
 
         Args:
@@ -139,6 +141,8 @@ class MilvusStore:
             FieldSchema(name="document_id", dtype=DataType.INT64),
             FieldSchema(name="chunk_type", dtype=DataType.VARCHAR, max_length=20),
             FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=65535),
+            FieldSchema(name="content_hash", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="status", dtype=DataType.VARCHAR, max_length=20),
             FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim)
         ]
         schema = CollectionSchema(fields=fields, description=f"{collection_name} collection")
