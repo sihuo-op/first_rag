@@ -174,7 +174,7 @@ class MilvusStore:
         Args:
             collection_name: 目标集合名
             texts: 原始文本列表
-            metadata_list: 元数据列表（如 document_id、chunk_type）
+            metadata_list: 元数据列表（如 document_id、chunk_type、content_hash）
 
         Returns:
             插入后生成的 ID 列表
@@ -190,11 +190,12 @@ class MilvusStore:
             collection_name: 目标集合名
             vectors: 向量列表，每个向量是浮点数列表
             documents: 原始文本列表，与 vectors 一一对应
-            metadata_list: 元数据列表（如 document_id、chunk_type）
+            metadata_list: 元数据列表（document_id、chunk_type、content_hash）
 
         Returns:
             插入后生成的 ID 列表
         """
+        import hashlib
         self.connect()
         full_name = self._get_full_name(collection_name)
         collection = self._get_collection(full_name)
@@ -202,8 +203,13 @@ class MilvusStore:
         ids = [str(uuid.uuid4()) for _ in range(len(vectors))]
         document_ids = [meta.get("document_id", 0) for meta in metadata_list] if metadata_list else [0] * len(vectors)
         chunk_types = [meta.get("chunk_type", "small") for meta in metadata_list] if metadata_list else ["small"] * len(vectors)
+        content_hashes = [
+            meta.get("content_hash") or hashlib.sha256(doc.encode("utf-8")).hexdigest()
+            for meta, doc in zip(metadata_list or [{}] * len(documents), documents)
+        ]
+        statuses = ["active"] * len(vectors)
 
-        collection.insert([ids, document_ids, chunk_types, documents, vectors])
+        collection.insert([ids, document_ids, chunk_types, documents, content_hashes, statuses, vectors])
         collection.flush()
         return ids
 
