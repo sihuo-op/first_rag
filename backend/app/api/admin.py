@@ -157,7 +157,10 @@ async def patch_chunk(
         chunk.reviewed_at = now
         db.commit()
         if chunk.milvus_id:
-            vector_store.upsert_status("chunks", chunk.milvus_id, "superseded")
+            try:
+                vector_store.upsert_status("chunks", chunk.milvus_id, "superseded")
+            except Exception as e:
+                print(f"[admin.patch_chunk] Milvus sync failed for chunk {chunk_id}: {e}")
 
     elif action == "dismiss":
         # pending_review -> active（驳回，清空冲突字段）
@@ -172,7 +175,10 @@ async def patch_chunk(
         chunk.reviewed_at = now
         db.commit()
         if chunk.milvus_id:
-            vector_store.upsert_status("chunks", chunk.milvus_id, "active")
+            try:
+                vector_store.upsert_status("chunks", chunk.milvus_id, "active")
+            except Exception as e:
+                print(f"[admin.patch_chunk] Milvus sync failed for chunk {chunk_id}: {e}")
 
     elif action == "archive":
         # active -> archived（manual）
@@ -185,7 +191,10 @@ async def patch_chunk(
         chunk.reviewed_at = now
         db.commit()
         if chunk.milvus_id:
-            vector_store.upsert_status("chunks", chunk.milvus_id, "archived")
+            try:
+                vector_store.upsert_status("chunks", chunk.milvus_id, "archived")
+            except Exception as e:
+                print(f"[admin.patch_chunk] Milvus sync failed for chunk {chunk_id}: {e}")
 
     elif action == "restore":
         # archived -> active（保留统计字段）
@@ -198,7 +207,10 @@ async def patch_chunk(
         chunk.reviewed_at = now
         db.commit()
         if chunk.milvus_id:
-            vector_store.upsert_status("chunks", chunk.milvus_id, "active")
+            try:
+                vector_store.upsert_status("chunks", chunk.milvus_id, "active")
+            except Exception as e:
+                print(f"[admin.patch_chunk] Milvus sync failed for chunk {chunk_id}: {e}")
 
     elif action == "hard_delete":
         # 物理删除 PG + Milvus

@@ -449,3 +449,64 @@ def test_patch_forbidden_for_non_admin(test_db, mock_vector_store):
     client = TestClient(app)
     resp = client.patch("/api/v1/admin/chunks/1", json={"action": "archive"})
     assert resp.status_code == 403
+
+
+# ============ Milvus 容错 ============
+
+def test_patch_returns_200_when_milvus_upsert_fails(
+    test_db, admin_user, sample_doc, mock_vector_store
+):
+    """Milvus upsert_status 抛异常时不应传播给用户（PG 已 commit，状态以 PG 为准）。"""
+    chunk = _make_chunk(sample_doc.id, milvus_id="mv-1", content="c", status="active")
+    test_db.add(chunk)
+    test_db.commit()
+    test_db.refresh(chunk)
+
+    mock_vector_store.upsert_status.side_effect = RuntimeError("milvus down")
+
+    app = _build_app(test_db, admin_user, mock_vector_store)
+    client = TestClient(app)
+    resp = client.patch(f"/api/v1/admin/chunks/{chunk.id}", json={"action": "archive"})
+
+    # 用户视角：200 成功（PG 状态已 commit）
+    assert resp.status_code == 200, resp.text
+    # PG 状态正确
+    test_db.refresh(chunk)
+    assert chunk.status == "archived"
+    # Milvus 调用确实发生了（虽然失败）
+    mock_vector_store.upsert_status.assert_called_once_with("chunks", "mv-1", "archived")
+
+
+@pytest.mark.parametrize("action,start_status,expected_status", [
+    ("confirm", "pending_review", "superseded"),
+    ("dismiss", "pending_review", "active"),
+    ("archive", "active", "archived"),
+    ("restore", "archived", "active"),
+])
+def test_patch_all_status_actions_swallow_milvus_failures(
+    test_db, admin_user, sample_doc, mock_vector_store,
+    action, start_status, expected_status,
+):
+    """四个状态动作（confirm/dismiss/archive/restore）在 Milvus 同步失败时均不应抛 500。"""
+    chunk = _make_chunk(sample_doc.id, milvus_id="mv-x", content="c", status=start_status)
+    if start_status == "pending_review":
+        chunk.conflict_with_chunk_id = "mv-new"
+        chunk.conflict_detected_at = datetime(2026, 1, 1)
+        chunk.confidence = 0.7
+        chunk.review_reason = "x"
+    if start_status == "archived":
+        chunk.archived_reason = "manual"
+        chunk.archived_at = datetime(2026, 1, 1)
+    test_db.add(chunk)
+    test_db.commit()
+    test_db.refresh(chunk)
+
+    mock_vector_store.upsert_status.side_effect = RuntimeError("milvus down")
+
+    app = _build_app(test_db, admin_user, mock_vector_store)
+    client = TestClient(app)
+    resp = client.patch(f"/api/v1/admin/chunks/{chunk.id}", json={"action": action})
+
+    assert resp.status_code == 200, resp.text
+    test_db.refresh(chunk)
+    assert chunk.status == expected_status
