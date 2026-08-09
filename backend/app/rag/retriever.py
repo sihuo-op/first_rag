@@ -159,7 +159,7 @@ class HybridRetriever(BaseRetriever):
 
         self.vector_store.connect()
 
-    def retrieve(self, query: str, top_k: int = 10, background_tasks=None) -> tuple:
+    def retrieve(self, query: str, top_k: int = 10) -> tuple:
         debug_info = {
             "query": query,
             "steps": [],
@@ -261,11 +261,6 @@ class HybridRetriever(BaseRetriever):
             unique_results = reranked_results
             debug_info["rerank_used"] = True
         debug_info["steps"].append({"step": "rerank", "desc": "CrossEncoder 重排序", "count": len(unique_results), "time_s": round(rerank_time, 3)})
-
-        # 注册统计更新（fire-and-forget）
-        # db session 在 wrapper 内部创建，避免注册时创建到执行时过期
-        if background_tasks is not None and unique_results:
-            background_tasks.add_task(self._update_stats_wrapper, unique_results)
 
         return unique_results, debug_info
 
