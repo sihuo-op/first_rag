@@ -1,4 +1,5 @@
 from typing import List, Optional
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -10,6 +11,7 @@ from app.entities.schemas import (
     UserUpdate,
     StatsResponse,
     ChunkDetailResponse,
+    ChunkPatchRequest,
 )
 from app.entities.database import User, Document, DocumentChunk, Conversation, ChatMessage, UserRole
 from app.core.security import get_current_admin_user
@@ -127,6 +129,88 @@ async def list_chunks(
                 item.conflict_with_content = new_chunk.content
         result.append(item)
     return result
+
+
+@router.patch("/chunks/{chunk_id}")
+async def patch_chunk(
+    chunk_id: int,
+    data: ChunkPatchRequest,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db),
+    vector_store: MilvusStore = Depends(get_vector_store),
+):
+    """对 chunk 执行动作：confirm / dismiss / archive / restore / hard_delete"""
+    chunk = db.query(DocumentChunk).filter_by(id=chunk_id).first()
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+
+    action = data.action
+    now = datetime.utcnow()
+
+    if action == "confirm":
+        # pending_review -> superseded
+        if chunk.status != "pending_review":
+            raise HTTPException(status_code=400, detail="Only pending_review can be confirmed")
+        chunk.status = "superseded"
+        chunk.superseded_at = now
+        chunk.reviewed_by = current_user.id
+        chunk.reviewed_at = now
+        db.commit()
+        if chunk.milvus_id:
+            vector_store.upsert_status("chunks", chunk.milvus_id, "superseded")
+
+    elif action == "dismiss":
+        # pending_review -> active（驳回，清空冲突字段）
+        if chunk.status != "pending_review":
+            raise HTTPException(status_code=400, detail="Only pending_review can be dismissed")
+        chunk.status = "active"
+        chunk.conflict_with_chunk_id = None
+        chunk.conflict_detected_at = None
+        chunk.confidence = None
+        chunk.review_reason = None
+        chunk.reviewed_by = current_user.id
+        chunk.reviewed_at = now
+        db.commit()
+        if chunk.milvus_id:
+            vector_store.upsert_status("chunks", chunk.milvus_id, "active")
+
+    elif action == "archive":
+        # active -> archived（manual）
+        if chunk.status != "active":
+            raise HTTPException(status_code=400, detail="Only active can be archived")
+        chunk.status = "archived"
+        chunk.archived_reason = "manual"
+        chunk.archived_at = now
+        chunk.reviewed_by = current_user.id
+        chunk.reviewed_at = now
+        db.commit()
+        if chunk.milvus_id:
+            vector_store.upsert_status("chunks", chunk.milvus_id, "archived")
+
+    elif action == "restore":
+        # archived -> active（保留统计字段）
+        if chunk.status != "archived":
+            raise HTTPException(status_code=400, detail="Only archived can be restored")
+        chunk.status = "active"
+        chunk.archived_reason = None
+        chunk.archived_at = None
+        chunk.reviewed_by = current_user.id
+        chunk.reviewed_at = now
+        db.commit()
+        if chunk.milvus_id:
+            vector_store.upsert_status("chunks", chunk.milvus_id, "active")
+
+    elif action == "hard_delete":
+        # 物理删除 PG + Milvus
+        if chunk.milvus_id:
+            vector_store.delete_vectors("chunks", ids=[chunk.milvus_id])
+        db.delete(chunk)
+        db.commit()
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
+
+    return {"message": f"Chunk {chunk_id} {action} done"}
 
 
 @router.delete("/documents/{doc_id}")
