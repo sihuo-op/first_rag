@@ -438,3 +438,47 @@ class StatsResponse(BaseModel):
     total_documents: int
     total_conversations: int
     total_messages: int
+
+
+class ChunkDetailResponse(BaseModel):
+    """chunk 详情响应（含冲突与统计字段）"""
+    id: int
+    document_id: int
+    chunk_type: str
+    content: str
+    milvus_id: Optional[str] = None
+    content_hash: Optional[str] = None
+    status: str = "active"
+    # 冲突
+    conflict_with_chunk_id: Optional[str] = None
+    conflict_with_content: Optional[str] = None  # join 出来的新 chunk 内容
+    conflict_detected_at: Optional[datetime] = None
+    confidence: Optional[float] = None
+    review_reason: Optional[str] = None
+    superseded_at: Optional[datetime] = None
+    reviewed_by: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+    # 统计
+    access_count: int = 0
+    last_accessed_at: Optional[datetime] = None
+    hit_count: int = 0
+    avg_score: float = 0.0
+    # 归档
+    archived_reason: Optional[str] = None
+    archived_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ChunkPatchRequest(BaseModel):
+    """admin PATCH chunk 动作"""
+    action: str  # confirm | dismiss | archive | restore | hard_delete
+
+
+class DocumentWithConflictStatusResponse(DocumentResponse):
+    """文档响应（带冲突检测状态）"""
+    conflict_check_status: str = "completed"
+    conflict_check_progress: Optional[str] = None
+    conflict_check_completed_at: Optional[datetime] = None
