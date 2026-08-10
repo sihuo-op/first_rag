@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from collections import defaultdict
+import os
 import re
 import threading
 import time
@@ -83,11 +84,17 @@ _loaded_models_lock = threading.Lock()
 
 
 class Reranker:
-    """CrossEncoder 重排序器"""
+    """CrossEncoder 重排序器（ONNX Runtime int8 量化）
+
+    用 optimum 导出为 ONNX + AVX2 动态 int8 量化，替代 PyTorch FP32 推理。
+    首次加载会做导出+量化（5-10s），结果缓存到 ~/.cache/huggingface/onnx/<model>-int8/。
+    输出仍是 raw logits（与原 CrossEncoder.predict() 默认行为一致），不破坏 steps.py 的阈值标定。
+    """
 
     def __init__(self, model_name: str = "BAAI/bge-reranker-base"):
         self.model_name = model_name
         self._model = None
+        self._tokenizer = None
         self._lock = threading.Lock()
 
     def _load_model(self):
@@ -96,15 +103,45 @@ class Reranker:
                 return
             with _loaded_models_lock:
                 if self.model_name in _loaded_models:
-                    self._model = _loaded_models[self.model_name]
+                    self._model, self._tokenizer = _loaded_models[self.model_name]
                     return
                 try:
-                    from sentence_transformers import CrossEncoder
-                    self._model = CrossEncoder(self.model_name)
-                    _loaded_models[self.model_name] = self._model
-                    print(f"Reranker model loaded: {self.model_name}")
+                    from optimum.onnxruntime import ORTModelForSequenceClassification, ORTQuantizer
+                    from optimum.onnxruntime.configuration import AutoQuantizationConfig
+                    from transformers import AutoTokenizer
+
+                    cache_dir = os.path.expanduser(
+                        f"~/.cache/huggingface/onnx/{self.model_name.replace('/', '--')}-int8"
+                    )
+
+                    if os.path.exists(cache_dir):
+                        print(f"Loading cached ONNX int8 reranker from {cache_dir}")
+                        self._model = ORTModelForSequenceClassification.from_pretrained(
+                            cache_dir,
+                            provider="CPUExecutionProvider",
+                        )
+                    else:
+                        print(f"Exporting {self.model_name} to ONNX...")
+                        base_model = ORTModelForSequenceClassification.from_pretrained(
+                            self.model_name,
+                            export=True,
+                            provider="CPUExecutionProvider",
+                        )
+                        print(f"Quantizing to int8 (AVX2 dynamic)...")
+                        quantizer = ORTQuantizer.from_pretrained(base_model)
+                        qconfig = AutoQuantizationConfig.avx2(is_static=False, per_channel=False)
+                        os.makedirs(cache_dir, exist_ok=True)
+                        quantizer.quantize(qconfig, save_dir=cache_dir)
+                        self._model = ORTModelForSequenceClassification.from_pretrained(
+                            cache_dir,
+                            provider="CPUExecutionProvider",
+                        )
+
+                    self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                    _loaded_models[self.model_name] = (self._model, self._tokenizer)
+                    print(f"Reranker model loaded (ONNX int8): {self.model_name}")
                 except Exception as e:
-                    print(f"Reranker load failed: {e}")
+                    print(f"Reranker ONNX load failed: {e}")
                     self._model = None
 
     def rerank(self, query: str, documents: List[Dict[str, Any]], top_n: int = 5) -> List[Dict[str, Any]]:
@@ -124,9 +161,15 @@ class Reranker:
         return sorted(documents, key=lambda x: x.get("rerank_score", x.get("score", 0)), reverse=True)[:top_n]
 
     def _model_rerank(self, query: str, documents: List[Dict[str, Any]], top_n: int) -> List[Dict[str, Any]]:
+        import torch
         pairs = [(query, doc.get("content", "")) for doc in documents]
         with _loaded_models_lock:
-            scores = self._model.predict(pairs)
+            inputs = self._tokenizer(
+                pairs, padding=True, truncation=True, max_length=512, return_tensors="pt"
+            )
+            with torch.no_grad():
+                outputs = self._model(**inputs)
+            scores = outputs.logits.squeeze(-1).tolist()
         for doc, score in zip(documents, scores):
             doc["rerank_score"] = float(score)
         return sorted(documents, key=lambda x: x.get("rerank_score", 0), reverse=True)[:top_n]
