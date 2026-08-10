@@ -17,7 +17,7 @@
 **本期不做**：
 - 字节级完全相同 chunk 的引用计数（content_hash 相同直接跳过入库，不维护引用关系）
 - 跨文档语义聚类（仅做 1对1 冲突判定，不做主题级合并）
-- 消息队列引入（统计写入用 FastAPI BackgroundTasks 即可）
+- 消息队列引入（统计写入用 FastAPI BackgroundTasks 即可）/
 - `rag_memories` collection 的 schema 改动
 
 ## 2. 核心设计原则

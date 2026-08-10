@@ -7,6 +7,8 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from collections import defaultdict
+import re
 import threading
 import time
 import jieba
@@ -170,7 +172,7 @@ class HybridRetriever(BaseRetriever):
             "detail": {"dense_by_type": {}, "sparse_results": [], "merged_results": [], "deduped_results": [], "reranked_results": []}
         }
 
-        # 1. 密集向量检索（只查小块）
+        # 1. 密集向量检索（所有块类型，利用父子块提供更多上下文）
         with tracer.start_as_current_span("rag.retrieve.embedding") as span:
             embedding_start = time.time()
             query_vector = self.vector_store.embed_query(query)
@@ -179,10 +181,9 @@ class HybridRetriever(BaseRetriever):
             span.set_attribute("retrieve.embedding_time_s", round(embedding_time, 3))
             debug_info["steps"].append({"step": "embedding", "desc": "查询向量化", "vector_dim": len(query_vector), "time_s": round(embedding_time, 3)})
 
-        filter_expr = 'chunk_type == "small" && status == "active"'
         with tracer.start_as_current_span("rag.retrieve.dense") as span:
             dense_start = time.time()
-            results = self.vector_store.search_vectors(collection_name="chunks", query_vector=query_vector, top_k=top_k, filter_expr=filter_expr)
+            results = self.vector_store.search_vectors(collection_name="chunks", query_vector=query_vector, top_k=top_k)
             dense_time = time.time() - dense_start
             span.set_attribute("retrieve.dense_count", len(results))
             span.set_attribute("retrieve.dense_time_s", round(dense_time, 3))
@@ -190,15 +191,15 @@ class HybridRetriever(BaseRetriever):
         dense_results = []
         dense_by_type = {"small": [], "medium": [], "large": []}
         for r in results:
-            r["chunk_type"] = "small"
+            chunk_type = r.get("chunk_type", "small")
             r["dense_score"] = r.get("score", 0)
-            dense_by_type["small"].append({"content": r.get("content", ""), "dense_score": round(r.get("dense_score", 0), 4), "chunk_type": "small"})
+            dense_by_type.setdefault(chunk_type, []).append({"content": r.get("content", "")[:100], "dense_score": round(r.get("dense_score", 0), 4), "chunk_type": chunk_type})
+            debug_info["chunks_by_type"][chunk_type] = debug_info["chunks_by_type"].get(chunk_type, 0) + 1
         dense_results.extend(results)
 
         debug_info["dense_results"] = len(dense_results)
-        debug_info["chunks_by_type"]["small"] = len(results)
         debug_info["detail"]["dense_by_type"] = dense_by_type
-        debug_info["steps"].append({"step": "dense_search", "desc": "密集向量检索（仅小块）", "count": len(dense_results), "time_s": round(dense_time, 3)})
+        debug_info["steps"].append({"step": "dense_search", "desc": "密集向量检索（所有块类型）", "count": len(dense_results), "time_s": round(dense_time, 3)})
 
         # 2. 稀疏检索（BM25）
         with tracer.start_as_current_span("rag.retrieve.sparse") as span:
@@ -209,6 +210,11 @@ class HybridRetriever(BaseRetriever):
             span.set_attribute("retrieve.sparse_time_s", round(sparse_time, 3))
         for r in sparse_results:
             r["sparse_score"] = r.pop("score", 0)
+            # chunk_type 在 metadata 里，提到顶层方便后续 RRF 合并和晋升逻辑读取
+            if "chunk_type" not in r:
+                meta = r.get("metadata") or {}
+                if meta.get("chunk_type"):
+                    r["chunk_type"] = meta["chunk_type"]
         debug_info["sparse_results"] = len(sparse_results)
         debug_info["detail"]["sparse_results"] = [{"content": r.get("content", ""), "sparse_score": round(r.get("sparse_score", 0), 4)} for r in sparse_results]
         debug_info["steps"].append({"step": "sparse_search", "desc": "稀疏检索（BM25）", "count": len(sparse_results), "time_s": round(sparse_time, 3)})
@@ -226,22 +232,27 @@ class HybridRetriever(BaseRetriever):
         ]
         debug_info["steps"].append({"step": "merge", "desc": f"RRF 排名融合（k={self.rrf_k}）", "count": len(all_results), "time_s": round(merge_time, 3)})
 
-        # 4. 去重
+        # 4. 去重（精确内容 + 父子块晋升）
         with tracer.start_as_current_span("rag.retrieve.dedup") as span:
             dedup_start = time.time()
-            unique_results = []
+            # 4a. 精确内容去重
+            exact_dedup = []
             seen_contents = set()
             for result in sorted(all_results, key=lambda x: x.get("rrf_score", 0), reverse=True):
                 content = result.get("content", "")
                 if content not in seen_contents:
                     seen_contents.add(content)
-                    unique_results.append(result)
-                if len(unique_results) >= top_k:
-                    break
+                    exact_dedup.append(result)
+            # 4b. 父子块晋升：2+ smalls 同属一个 medium -> 丢 smalls 保 medium；mediums->large 同理
+            unique_results = self._dedup_by_containment(exact_dedup)
             dedup_time = time.time() - dedup_start
+            promo_stats = getattr(self, "_last_promotion_stats", {"small_to_medium": 0, "medium_to_large": 0})
             span.set_attribute("retrieve.dedup_count", len(unique_results))
-        debug_info["detail"]["deduped_results"] = [{"content": r.get("content", ""), "rrf_score": round(r.get("rrf_score", 0), 4), "chunk_type": r.get("chunk_type", "unknown")} for r in unique_results]
-        debug_info["steps"].append({"step": "dedup", "desc": "去重", "count": len(unique_results), "time_s": round(dedup_time, 3)})
+            span.set_attribute("retrieve.promoted_small_to_medium", promo_stats["small_to_medium"])
+            span.set_attribute("retrieve.promoted_medium_to_large", promo_stats["medium_to_large"])
+            span.set_attribute("retrieve.containment_dropped", len(exact_dedup) - len(unique_results))
+        debug_info["detail"]["deduped_results"] = [{"content": r.get("content", "")[:200], "rrf_score": round(r.get("rrf_score", 0), 4), "chunk_type": r.get("chunk_type", "unknown")} for r in unique_results]
+        debug_info["steps"].append({"step": "dedup", "desc": f"去重+晋升（small->medium: {promo_stats['small_to_medium']} 次, medium->large: {promo_stats['medium_to_large']} 次, 丢弃 {len(exact_dedup) - len(unique_results)} 个子块）", "count": len(unique_results), "time_s": round(dedup_time, 3)})
 
         # 5. 重排序
         rerank_time = 0
@@ -280,6 +291,71 @@ class HybridRetriever(BaseRetriever):
             update_chunk_stats(db, normalized)
         finally:
             db.close()
+
+    def _dedup_by_containment(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        父子块晋升：同一父块下 >=2 个子块被检索到时，丢弃子块保留父块
+
+        - 2+ smalls 内容包含于同一 medium -> 丢 smalls，保留 medium
+        - 2+ mediums 内容包含于同一 large -> 丢 mediums，保留 large
+        - 单个 small/medium 不晋升（保留精确匹配）
+        - 父子关系通过内容包含判断（归一化空白后做子串匹配，避免全角/半角空格差异导致漏判）
+
+        Args:
+            results: 已精确去重的结果列表
+
+        Returns:
+            晋升后的结果列表（按 RRF 分数降序）
+        """
+        if len(results) <= 1:
+            return results
+
+        def _normalize(s: str) -> str:
+            return re.sub(r"\s+", "", s)
+
+        indexed = list(enumerate(results))
+        smalls = [(i, r) for i, r in indexed if r.get("chunk_type") == "small"]
+        mediums = [(i, r) for i, r in indexed if r.get("chunk_type") == "medium"]
+        larges = [(i, r) for i, r in indexed if r.get("chunk_type") == "large"]
+
+        to_drop: set = set()
+        self._last_promotion_stats = {"small_to_medium": 0, "medium_to_large": 0}
+
+        # small -> medium 晋升
+        medium_to_smalls: Dict[int, List[int]] = defaultdict(list)
+        for s_idx, s in smalls:
+            s_norm = _normalize(s.get("content", ""))
+            if not s_norm:
+                continue
+            for m_idx, m in mediums:
+                m_norm = _normalize(m.get("content", ""))
+                if s_norm != m_norm and s_norm in m_norm:
+                    medium_to_smalls[m_idx].append(s_idx)
+                    break  # small 只可能属于一个 medium
+        for m_idx, s_indices in medium_to_smalls.items():
+            if len(s_indices) >= 2:
+                to_drop.update(s_indices)
+                self._last_promotion_stats["small_to_medium"] += 1
+
+        # medium -> large 晋升
+        large_to_mediums: Dict[int, List[int]] = defaultdict(list)
+        for m_idx, m in mediums:
+            m_norm = _normalize(m.get("content", ""))
+            if not m_norm:
+                continue
+            for l_idx, l in larges:
+                l_norm = _normalize(l.get("content", ""))
+                if m_norm != l_norm and m_norm in l_norm:
+                    large_to_mediums[l_idx].append(m_idx)
+                    break
+        for l_idx, m_indices in large_to_mediums.items():
+            if len(m_indices) >= 2:
+                to_drop.update(m_indices)
+                self._last_promotion_stats["medium_to_large"] += 1
+
+        promoted = [r for i, r in enumerate(results) if i not in to_drop]
+        promoted.sort(key=lambda x: x.get("rrf_score", 0), reverse=True)
+        return promoted
 
     def _merge_with_rrf(self, dense_results: List[Dict], sparse_results: List[Dict], top_k: int) -> List[Dict]:
         """
