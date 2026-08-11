@@ -16,7 +16,7 @@
 - 检索：query 实体抽取 + 2 跳 Cypher + RRF 三路融合 + 失败回退
 - 可观测性：OTel tracing 全链路；管理后台用 Neo4j Browser + admin API
 
-**生产级标准保留**：冲突检测审核流程、失败回退、严格实体合并、OTel tracing、错误处理与重试。
+**生产级标准保留**：冲突检测审核流程、失败回退、严格实体合并、OTel tracing、错误处理。重试策略：Neo4j 写入失败指数退避重试 3 次（100ms / 500ms / 2s），LLM 调用失败重试 2 次；超时则记 OTel 错误并按失败回退处理。
 
 **不做**（迁移/部署考虑，个人项目不涉及）：
 - 渐进式迁移 / 灰度发布 / feature flag
@@ -74,6 +74,7 @@
 | `kg_retriever.py` | KG 检索路径：query 实体抽取 + 多跳查询 |
 | `kg_admin.py` | 后台接口：图查询、审核队列 |
 | `exceptions.py` | KG 异常类型（用于失败回退） |
+| `backfill.py` | 现有文档回填 CLI 脚本（`python -m app.knowledge_graph.backfill`） |
 
 ### 集成点
 
@@ -89,11 +90,13 @@
 | 标签 | 关键属性 | 说明 |
 |---|---|---|
 | `Law` | `id`, `name`, `level` (法律/法规/规章/司法解释), `effective_date`, `issuer`, `region_id` | 法名，如《劳动合同法》 |
-| `Article` | `id`, `law_id`, `article_no`, `content_hash`, `chunk_ids` (list), `status` | 具体法条；`chunk_ids` 关联 Milvus chunks |
-| `Concept` | `id`, `name`, `aliases` (list), `embedding` | 法律概念，如"试用期"；embedding 用于 query 实体匹配 |
-| `Party` | `id`, `name`, `aliases` (list) | 主体，如"用人单位""劳动者" |
+| `Article` | `id`, `law_id`, `article_no`, `content_hash`, `chunk_ids` (list), `status`, `char_start`, `char_end` | 具体法条；`chunk_ids` 关联 Milvus chunks；`char_start`/`char_end` 持久化用于 re-chunking 时重算 chunk_ids |
+| `Concept` | `id`, `name`, `aliases` (list), `embedding`, `source_chunk_ids` (list) | 法律概念，如"试用期"；embedding 用于 query 实体匹配；`source_chunk_ids` 记录该概念从哪些 chunks 抽出 |
+| `Party` | `id`, `name`, `aliases` (list), `source_chunk_ids` (list) | 主体，如"用人单位""劳动者" |
 | `Region` | `id`, `name`, `level` (国家/省/市) | 地域 |
 | `Document` | `id`, `source_file`, `uploaded_at`, `doc_type` | 上传的原始文档 |
+
+**Concept embedding 模型**：与 chunk embedding 同模型（dense 路径用的 embedding model），保证 query embedding 可在 Neo4j Concept 向量索引上复用检索。维度 1024，cosine 相似度。
 
 ### 边类型（6 种）
 
@@ -228,13 +231,26 @@ Per chunk 调一次 LLM。输出 JSON：
 
 ### 实体合并三级策略（`entity_resolver.py`）
 
+实体合并按节点类型分支：
+
+**Concept**（走三级）：
+
 | 级别 | 触发条件 | 动作 |
 |---|---|---|
-| 1 精确 | name + type 完全一致 | 直接合并，新 alias 加到已有节点 |
+| 1 精确 | name 完全一致 | 直接合并，新 alias 加到已有节点 |
 | 2 alias | 新 name 在已有节点 aliases 里 | 合并到已有节点 |
 | 3 模糊 | name embedding cosine > 0.92 | LLM 二次确认（"试用期" vs "试用期间" 是否同一概念）-> 合并或新建 |
 
-合并时不修改已有节点的 name（首次写入者占主导），记录 `source_chunk_ids` 作为来源。
+**Party**（走两级，数量少且 name 简单，不做模糊匹配）：
+
+| 级别 | 触发条件 | 动作 |
+|---|---|---|
+| 1 精确 | name 完全一致 | 直接合并 |
+| 2 alias | 新 name 在已有节点 aliases 里 | 合并到已有节点 |
+
+**Law / Region**：按 name 唯一约束直接 MERGE，无 alias 合并。
+
+合并时不修改已有节点的 name（首次写入者占主导），追加 `source_chunk_ids` 记录来源。
 
 ### OTel 集成
 
@@ -380,9 +396,19 @@ kg.retrieve (父 span)
 
 ```
 pending_review (初始)
-   ├─ confirmed   -> 旧 Article 节点 status 改 superseded（与 chunk-schema-extension 对齐）
-   └─ dismissed   -> 边保留 status=dismissed（审计用），Articles 不变
+   ├─ confirmed   -> 边 status=confirmed（仅标记冲突存在，不自动 supersede）
+   └─ dismissed   -> 边 status=dismissed（审计用）
 ```
+
+**确认冲突后不自动 supersede 任何 Article**。"新法优于旧法" 和 "上位法优于下位法" 可能冲突，由人工在 `confirmed` 后通过独立的 supersede 接口决定哪条 Article 失效：
+
+```
+POST /api/v1/admin/kg/articles/{article_id}/supersede
+     body: { reason: "...", conflict_edge_id: "..." (可选) }
+     -> Article status=superseded，记录 supersede_reason
+```
+
+这样 conflict 检测与 supersede 决策解耦：conflict 只负责"两条有矛盾"，supersede 由人工基于法律层级、生效时间、地域等判断。
 
 边属性：
 - `status`: pending_review / confirmed / dismissed
@@ -399,11 +425,16 @@ GET  /api/v1/admin/kg/conflicts?status=pending_review
 
 POST /api/v1/admin/kg/conflicts/{edge_id}/confirm
      body: { review_note: "..." }
-     -> 边 status=confirmed；旧 Article status=superseded
+     -> 边 status=confirmed（仅标记冲突存在，不自动 supersede）
 
 POST /api/v1/admin/kg/conflicts/{edge_id}/dismiss
      body: { review_note: "..." }
      -> 边 status=dismissed
+
+POST /api/v1/admin/kg/articles/{article_id}/supersede
+     body: { reason: "...", conflict_edge_id: "..." (可选) }
+     -> Article status=superseded，记录 supersede_reason
+     独立于 conflict 确认，由人工基于法律层级/生效时间/地域等判断
 
 GET  /api/v1/admin/kg/graph?concept_id=...
      -> 返回 Concept 周围子图（用于可视化/调试）
