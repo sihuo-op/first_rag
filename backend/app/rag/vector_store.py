@@ -363,6 +363,37 @@ class MilvusStore:
     def delete_memory_vectors(self, collection_name: str, memory_id: int) -> None:
         self.delete_vectors(collection_name, filter_expr=f"memory_id == {int(memory_id)}")
 
+    def query_chunks(self, collection_name: str, filter_expr: str, output_fields: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """
+        按 filter 表达式查询 chunk（非向量搜索），用于按 document_id / chunk_type 取 parent chunks。
+
+        Args:
+            collection_name: 集合名
+            filter_expr: Milvus 过滤表达式（如 "document_id in [1,2] and chunk_type in ['medium','large']"）
+            output_fields: 返回字段，默认 id/document_id/chunk_type/content/content_hash/status
+
+        Returns:
+            chunk dict 列表
+        """
+        self.connect()
+        full_name = self._get_full_name(collection_name)
+        collection = self._get_collection(full_name)
+        fields = output_fields or ["id", "document_id", "chunk_type", "content", "content_hash", "status"]
+        try:
+            results = collection.query(
+                expr=filter_expr,
+                output_fields=fields,
+                timeout=10
+            )
+        except MilvusException as e:
+            if "Unsupported field type: 0" in (str(e.code) + str(e.message)):
+                return []
+            raise
+        return [
+            {field: row.get(field) for field in fields}
+            for row in results
+        ]
+
     def upsert_status(self, collection_name: str, chunk_id: str, status: str) -> None:
         """
         更新指定 chunk 的 status（低频操作，用于冲突作废/归档/回滚）
