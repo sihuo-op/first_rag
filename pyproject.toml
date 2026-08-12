@@ -9,5 +9,12 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi",
     "opentelemetry-instrumentation-httpx",
     "opentelemetry-instrumentation-sqlalchemy",
+    "neo4j>=5.20",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "testcontainers-neo4j>=4.0",
 ]
 
