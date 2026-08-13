@@ -143,6 +143,15 @@ class MilvusStore:
         if utility.has_collection(full_name, using=self.alias):
             # 检查现有 collection 是否含 char_start/char_end 字段
             existing_fields = self._describe_collection_fields(full_name)
+            if existing_fields is None:
+                # describe 失败（transient Milvus error 如网络抖动、重连）。
+                # 不要冒然 drop，否则会销毁生产数据。后续可重试。
+                logger.warning(
+                    "Could not describe collection %s (transient Milvus error?). "
+                    "Skipping schema migration to avoid data loss. Retry later.",
+                    full_name,
+                )
+                return
             if "char_start" in existing_fields and "char_end" in existing_fields:
                 return
             logger.warning(
@@ -463,23 +472,29 @@ class MilvusStore:
             collection_name: 不带前缀的集合名
 
         Returns:
-            字段名列表；集合不存在时返回空列表
+            字段名列表；集合不存在或 describe 失败时返回空列表
         """
         self.connect()
         full_name = self._get_full_name(collection_name)
         if not utility.has_collection(full_name, using=self.alias):
             return []
-        return self._describe_collection_fields(full_name)
+        fields = self._describe_collection_fields(full_name)
+        return fields if fields is not None else []
 
-    def _describe_collection_fields(self, full_name: str) -> List[str]:
-        """内部辅助：根据完整集合名获取字段名列表。"""
+    def _describe_collection_fields(self, full_name: str) -> Optional[List[str]]:
+        """内部辅助：根据完整集合名获取字段名列表。
+
+        Returns:
+            字段名列表；若 describe 调用失败（transient Milvus error）返回 None，
+            以便调用方区分"集合无字段"和"describe 失败"，避免误触发 drop+recreate。
+        """
         try:
             collection = Collection(name=full_name, using=self.alias)
             # collection.schema.fields 是 FieldSchema 列表
             return [f.name for f in collection.schema.fields]
         except MilvusException as e:
             logger.warning("Failed to describe collection %s: %s", full_name, e)
-            return []
+            return None
 
     def _get_full_name(self, collection_name: str) -> str:
         """生成带前缀的完整集合名称"""

@@ -16,26 +16,33 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
 def test_milvus_rag_chunks_has_char_offset_fields():
-    """集成测试：连接 Milvus，验证 rag_chunks collection 含 char_start/char_end。
+    """集成测试：连接 Milvus，验证 create_collection 创建的 collection 含 char_start/char_end。
 
     Milvus 不可用时 skip。
-    调用 create_collection 触发 drop+recreate 迁移路径（如缺字段）。
+    使用独立的 "chunks_schema_test" collection，避免触发生产 rag_chunks 的 drop+recreate。
+    create_collection 是幂等的：fresh collection 会直接创建；若已存在且含字段则直接返回。
     """
     from app.core.dependencies import get_vector_store
 
     try:
         vs = get_vector_store()
-        # create_collection 是幂等的：若现有 collection 缺 char_start/char_end，
-        # 会 drop + recreate（生产迁移路径）；若已有字段则直接返回。
-        vs.create_collection("chunks")
-        if not vs.has_collection("chunks"):
-            pytest.skip("Milvus chunks collection not available")
     except Exception as e:
         pytest.skip(f"Milvus not available: {e}")
 
-    fields = vs.get_collection_fields("chunks")
-    assert "char_start" in fields, f"char_start missing from rag_chunks fields: {fields}"
-    assert "char_end" in fields, f"char_end missing from rag_chunks fields: {fields}"
+    test_collection = "chunks_schema_test"
+    try:
+        # 先清理可能残留的 test collection，确保 create_collection 走 fresh 创建路径
+        if vs.has_collection(test_collection):
+            vs.drop_collection(test_collection)
+        vs.create_collection(test_collection)
+        if not vs.has_collection(test_collection):
+            pytest.skip("Milvus chunks_schema_test collection not available")
+    except Exception as e:
+        pytest.skip(f"Milvus not available: {e}")
+
+    fields = vs.get_collection_fields(test_collection)
+    assert "char_start" in fields, f"char_start missing from {test_collection} fields: {fields}"
+    assert "char_end" in fields, f"char_end missing from {test_collection} fields: {fields}"
 
 
 def test_pg_document_chunks_has_char_offset_columns():
@@ -130,3 +137,70 @@ def test_insert_vectors_reads_char_offset_from_metadata():
     char_ends = call_args[7]
     assert char_starts == [10, 0], f"char_starts mismatch: {char_starts}"
     assert char_ends == [50, 0], f"char_ends mismatch: {char_ends}"
+
+
+def test_create_collection_skips_drop_when_describe_fails():
+    """单元测试：describe 失败时不要 drop+recreate，避免 transient Milvus error 销毁生产数据。
+
+    Regression test for fix round 1：之前 `_describe_collection_fields` 返回 `[]` on exception，
+    导致 `create_collection` 误判 collection 缺字段，触发 drop+recreate 销毁数据。
+    现在改为返回 None，`create_collection` 应跳过 migration。
+    """
+    from unittest.mock import MagicMock, patch
+    from app.rag.vector_store import MilvusStore
+
+    vs = MilvusStore(host="localhost", port=19530)
+    vs.connect = MagicMock()
+
+    with patch("app.rag.vector_store.utility") as mock_utility, \
+         patch("app.rag.vector_store.Collection") as mock_collection_cls:
+        # has_collection 返回 True -> 进入 migration 检查路径
+        mock_utility.has_collection.return_value = True
+        # _describe_collection_fields 返回 None -> 模拟 transient describe 失败
+        vs._describe_collection_fields = MagicMock(return_value=None)
+
+        # create_collection 应在 drop 之前 return
+        vs.create_collection("chunks")
+
+        # 关键断言：drop_collection 不应被调用
+        assert not mock_utility.drop_collection.called, (
+            "drop_collection should NOT be called when describe fails (transient Milvus error). "
+            "This would destroy production data."
+        )
+        # 也不应创建新 collection（应直接 return）
+        assert not mock_collection_cls.called, (
+            "Collection() constructor should NOT be called when describe fails; "
+            "create_collection should return early without modifying the existing collection."
+        )
+
+
+def test_create_collection_drops_when_describe_succeeds_and_fields_missing():
+    """单元测试：describe 成功但缺 char_start/char_end 时应 drop+recreate（正常 migration 路径）。
+
+    对比 test_create_collection_skips_drop_when_describe_fails，确保正常迁移仍然工作。
+    """
+    from unittest.mock import MagicMock, patch
+    from app.rag.vector_store import MilvusStore
+
+    vs = MilvusStore(host="localhost", port=19530)
+    vs.connect = MagicMock()
+
+    with patch("app.rag.vector_store.utility") as mock_utility, \
+         patch("app.rag.vector_store.Collection") as mock_collection_cls:
+        mock_utility.has_collection.return_value = True
+        # describe 成功但缺字段
+        vs._describe_collection_fields = MagicMock(
+            return_value=["id", "document_id", "chunk_type", "content", "content_hash", "status", "embedding"]
+        )
+        # mock Collection constructor + 实例方法
+        mock_collection_instance = MagicMock()
+        mock_collection_cls.return_value = mock_collection_instance
+
+        vs.create_collection("chunks")
+
+        # drop_collection 应被调用一次（迁移路径）
+        assert mock_utility.drop_collection.called, (
+            "drop_collection SHOULD be called when describe succeeds and char_start/char_end are missing"
+        )
+        # Collection 应被重新创建
+        assert mock_collection_cls.called, "Collection should be recreated after drop"
