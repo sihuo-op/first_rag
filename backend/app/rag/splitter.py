@@ -25,6 +25,14 @@ class ThreeLayerSplitter(TextSplitter):
     - Large: 按语义单元（段落组）切分，保留完整上下文
     - Medium: 按句子组切分，平衡上下文和精确性
     - Small: 按词组切分，提供精确匹配
+
+    Offset 精度说明:
+    char_start/char_end offsets are exact for large chunks when paragraph
+    separators are exactly ``\\n\\n``. For medium/small chunks, offsets are
+    bounded within the parent large chunk's range but may drift by the
+    difference between original whitespace and ``\\n\\n`` (medium) or a single
+    space (small). Sufficient for Article<->chunk range-overlap matching on
+    legal documents (which use ``\\n\\n`` consistently between paragraphs).
     """
 
     def __init__(self, large_size: int = 2000, medium_size: int = 500, small_size: int = 150, overlap: int = 50):
@@ -159,51 +167,6 @@ class ThreeLayerSplitter(TextSplitter):
         if current:
             chunk_text = " ".join(current)
             chunks.append((chunk_text, base_offset + current_start, base_offset + current_start + len(chunk_text)))
-        return chunks
-
-    def _split_by_semantic_units(self, text: str, target_size: int) -> List[str]:
-        paragraphs = re.split(r'\n\s*\n', text.strip())
-        chunks, current_chunk, current_size = [], [], 0
-        for para in paragraphs:
-            para_size = self._count_tokens(para)
-            if current_size + para_size > target_size and current_chunk:
-                chunks.append("\n\n".join(current_chunk))
-                current_chunk, current_size = [para], para_size
-            else:
-                current_chunk.append(para)
-                current_size += para_size
-        if current_chunk:
-            chunks.append("\n\n".join(current_chunk))
-        return chunks
-
-    def _split_by_paragraphs(self, text: str, target_size: int) -> List[str]:
-        sentences = re.split(r'(?<=[.!?。！？])\s+', text.strip())
-        chunks, current_chunk, current_size = [], [], 0
-        for sent in sentences:
-            sent_size = self._count_tokens(sent)
-            if current_size + sent_size > target_size and current_chunk:
-                chunks.append(" ".join(current_chunk))
-                current_chunk, current_size = [sent], sent_size
-            else:
-                current_chunk.append(sent)
-                current_size += sent_size
-        if current_chunk:
-            chunks.append(" ".join(current_chunk))
-        return chunks
-
-    def _split_by_sentences(self, text: str, target_size: int) -> List[str]:
-        words = re.split(r'\s+', text.strip())
-        chunks, current_chunk, current_size = [], [], 0
-        for word in words:
-            word_size = self._count_tokens(word)
-            if current_size + word_size > target_size and current_chunk:
-                chunks.append(" ".join(current_chunk))
-                current_chunk, current_size = [word], word_size
-            else:
-                current_chunk.append(word)
-                current_size += word_size
-        if current_chunk:
-            chunks.append(" ".join(current_chunk))
         return chunks
 
     def _count_tokens(self, text: str) -> int:
