@@ -1,6 +1,6 @@
 import os
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from app.entities.database import Base, User, UserRole
 from app.core.security import get_password_hash
 from app.core.config import get_settings
@@ -36,8 +36,33 @@ def init_db() -> None:
         db.close()
 
 
-def _migrate_add_columns():
-    """数据库迁移：添加新列"""
+def _migrate_add_columns(engine=None):
+    """数据库迁移：添加新列
+
+    Args:
+        engine: 可选的 SQLAlchemy engine；不传时使用 app.db.session.engine（生产 engine）。
+                传入便于单元测试用独立 in-memory SQLite 验证迁移路径。
+    """
+    if engine is None:
+        from app.db.session import engine as _engine
+        engine = _engine
+
+    inspector = inspect(engine)
+
+    # document_chunks 表迁移：添加 char_start / char_end 列（Task 4）
+    if "document_chunks" in inspector.get_table_names():
+        columns = [c["name"] for c in inspector.get_columns("document_chunks")]
+        with engine.connect() as conn:
+            if "char_start" not in columns:
+                conn.execute(text("ALTER TABLE document_chunks ADD COLUMN char_start INTEGER"))
+                conn.commit()
+                print("Added column: document_chunks.char_start")
+            if "char_end" not in columns:
+                conn.execute(text("ALTER TABLE document_chunks ADD COLUMN char_end INTEGER"))
+                conn.commit()
+                print("Added column: document_chunks.char_end")
+
+    # chat_messages 表迁移：debug_info / process_time 列（旧迁移，保留）
     with engine.connect() as conn:
         # 检查并添加 debug_info 列
         try:

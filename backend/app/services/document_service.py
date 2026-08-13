@@ -162,7 +162,9 @@ class DocumentService:
                 metadata_list.append({
                     "document_id": doc_id,
                     "chunk_type": chunk["chunk_type"],
-                    "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    "char_start": chunk.get("char_start", 0),
+                    "char_end": chunk.get("char_end", 0),
                 })
 
             milvus_ids = self.vector_store.add_texts("chunks", texts, metadata_list)
@@ -175,6 +177,8 @@ class DocumentService:
                     position=chunk.get("position", idx),
                     milvus_id=milvus_ids[idx],
                     content_hash=metadata_list[idx]["content_hash"],
+                    char_start=chunk.get("char_start"),
+                    char_end=chunk.get("char_end"),
                     status="active"
                 )
                 self.db.add(db_chunk)

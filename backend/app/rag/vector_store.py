@@ -8,10 +8,13 @@ Milvus 向量数据库封装，集成了 embedding 模型，负责：
 """
 
 from typing import List, Dict, Any, Optional
+import logging
 import threading
 import uuid
 from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility, MilvusException
 from sentence_transformers import SentenceTransformer
+
+logger = logging.getLogger(__name__)
 
 
 class MilvusStore:
@@ -124,7 +127,12 @@ class MilvusStore:
         - content: 原始文本内容
         - content_hash: 内容哈希，用于去重和冲突检测
         - status: 状态（active/draft/archived/cold）
+        - char_start: 字符起始 offset（INT64）
+        - char_end: 字符结束 offset（INT64）
         - embedding: 向量
+
+        如果已存在的 collection 缺少 char_start/char_end 字段，会打 warning 并 drop + recreate。
+        现有 chunks 需要通过 backfill 脚本重新 ingest（Task 15）。
 
         Args:
             collection_name: 集合名称
@@ -133,7 +141,18 @@ class MilvusStore:
         self.connect()
         full_name = self._get_full_name(collection_name)
         if utility.has_collection(full_name, using=self.alias):
-            return
+            # 检查现有 collection 是否含 char_start/char_end 字段
+            existing_fields = self._describe_collection_fields(full_name)
+            if "char_start" in existing_fields and "char_end" in existing_fields:
+                return
+            logger.warning(
+                "Collection %s lacks char_start/char_end fields (existing fields: %s). "
+                "Dropping and recreating. Existing chunks need re-ingest via backfill script (Task 15).",
+                full_name, existing_fields,
+            )
+            utility.drop_collection(full_name, using=self.alias)
+            with self._collections_lock:
+                self._collections.pop(full_name, None)
 
         dim = dimension or self.dimension
         fields = [
@@ -143,6 +162,8 @@ class MilvusStore:
             FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=65535),
             FieldSchema(name="content_hash", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="status", dtype=DataType.VARCHAR, max_length=20),
+            FieldSchema(name="char_start", dtype=DataType.INT64, description="字符起始 offset"),
+            FieldSchema(name="char_end", dtype=DataType.INT64, description="字符结束 offset"),
             FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=dim)
         ]
         schema = CollectionSchema(fields=fields, description=f"{collection_name} collection")
@@ -190,7 +211,7 @@ class MilvusStore:
             collection_name: 目标集合名
             vectors: 向量列表，每个向量是浮点数列表
             documents: 原始文本列表，与 vectors 一一对应
-            metadata_list: 元数据列表（document_id、chunk_type、content_hash）
+            metadata_list: 元数据列表（document_id、chunk_type、content_hash、char_start、char_end）
 
         Returns:
             插入后生成的 ID 列表
@@ -208,8 +229,17 @@ class MilvusStore:
             for meta, doc in zip(metadata_list or [{}] * len(documents), documents)
         ]
         statuses = ["active"] * len(vectors)
+        # char_start/char_end 从 metadata 读取，缺省 0
+        char_starts = [
+            int(meta.get("char_start", 0)) if meta else 0
+            for meta in (metadata_list or [{}] * len(vectors))
+        ]
+        char_ends = [
+            int(meta.get("char_end", 0)) if meta else 0
+            for meta in (metadata_list or [{}] * len(vectors))
+        ]
 
-        collection.insert([ids, document_ids, chunk_types, documents, content_hashes, statuses, vectors])
+        collection.insert([ids, document_ids, chunk_types, documents, content_hashes, statuses, char_starts, char_ends, vectors])
         collection.flush()
         return ids
 
@@ -262,7 +292,7 @@ class MilvusStore:
                 },
                 limit=top_k,
                 expr=effective_filter,
-                output_fields=["id", "document_id", "chunk_type", "content", "content_hash", "status"],
+                output_fields=["id", "document_id", "chunk_type", "content", "content_hash", "status", "char_start", "char_end"],
                 timeout=5
             )
         except MilvusException as e:
@@ -281,6 +311,8 @@ class MilvusStore:
                 "content": hit.entity.get("content"),
                 "content_hash": hit.entity.get("content_hash"),
                 "status": hit.entity.get("status"),
+                "char_start": hit.entity.get("char_start"),
+                "char_end": hit.entity.get("char_end"),
                 "score": hit.score
             }
             for hit in results[0]
@@ -381,7 +413,7 @@ class MilvusStore:
         # 查出完整行
         results = collection.query(
             expr=f'id == "{chunk_id}"',
-            output_fields=["id", "document_id", "chunk_type", "content", "content_hash", "status", "embedding"],
+            output_fields=["id", "document_id", "chunk_type", "content", "content_hash", "status", "char_start", "char_end", "embedding"],
             timeout=5
         )
         if not results:
@@ -396,6 +428,8 @@ class MilvusStore:
             "content": row["content"],
             "content_hash": row["content_hash"],
             "status": status,
+            "char_start": row.get("char_start", 0) or 0,
+            "char_end": row.get("char_end", 0) or 0,
             "embedding": row["embedding"]
         }])
         collection.flush()
@@ -421,6 +455,31 @@ class MilvusStore:
         """检查集合是否存在"""
         self.connect()
         return utility.has_collection(self._get_full_name(collection_name), using=self.alias)
+
+    def get_collection_fields(self, collection_name: str) -> List[str]:
+        """获取集合的字段名列表（用于 schema 验证）。
+
+        Args:
+            collection_name: 不带前缀的集合名
+
+        Returns:
+            字段名列表；集合不存在时返回空列表
+        """
+        self.connect()
+        full_name = self._get_full_name(collection_name)
+        if not utility.has_collection(full_name, using=self.alias):
+            return []
+        return self._describe_collection_fields(full_name)
+
+    def _describe_collection_fields(self, full_name: str) -> List[str]:
+        """内部辅助：根据完整集合名获取字段名列表。"""
+        try:
+            collection = Collection(name=full_name, using=self.alias)
+            # collection.schema.fields 是 FieldSchema 列表
+            return [f.name for f in collection.schema.fields]
+        except MilvusException as e:
+            logger.warning("Failed to describe collection %s: %s", full_name, e)
+            return []
 
     def _get_full_name(self, collection_name: str) -> str:
         """生成带前缀的完整集合名称"""
