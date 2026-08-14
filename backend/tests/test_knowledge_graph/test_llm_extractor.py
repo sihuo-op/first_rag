@@ -134,3 +134,38 @@ def test_extract_handles_markdown_codeblock_wrap():
     assert len(result.entities) == 1
     assert result.entities[0].type == "Party"
     assert result.entities[0].name == "劳动者"
+
+
+def test_extract_handles_null_aliases():
+    """``aliases: null`` should not raise TypeError; entity is kept with empty aliases."""
+    fake_response = MagicMock()
+    fake_response.content = json.dumps({
+        "entities": [
+            {"type": "Concept", "name": "试用期", "aliases": None},
+        ],
+        "relations": [],
+    })
+
+    with patch("app.knowledge_graph.llm_extractor.invoke_llm_threadsafe", return_value=fake_response):
+        result = extract_from_chunk("text", "chunk-1", article_no=1, llm=MagicMock())
+
+    assert len(result.entities) == 1
+    assert result.entities[0].name == "试用期"
+    assert result.entities[0].aliases == []
+
+
+def test_extract_handles_non_numeric_confidence():
+    """Non-numeric confidence (e.g. "high") should fall back to 0.5, not raise ValueError."""
+    fake_response = MagicMock()
+    fake_response.content = json.dumps({
+        "entities": [],
+        "relations": [
+            {"type": "EXPLAINS", "from": "article:1", "to": "concept:x", "confidence": "high"},
+        ],
+    })
+
+    with patch("app.knowledge_graph.llm_extractor.invoke_llm_threadsafe", return_value=fake_response):
+        result = extract_from_chunk("text", "chunk-1", article_no=1, llm=MagicMock())
+
+    assert len(result.relations) == 1
+    assert result.relations[0].confidence == 0.5

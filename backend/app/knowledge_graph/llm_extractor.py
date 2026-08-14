@@ -149,11 +149,18 @@ def extract_from_chunk(
             span.record_exception(exc)
             return ExtractionResult()
 
+    def _safe_confidence(raw) -> float:
+        """Convert confidence to float, falling back to 0.5 on non-numeric values."""
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.5
+
     entities = [
         ExtractedEntity(
             type=e["type"],
             name=e["name"],
-            aliases=list(e.get("aliases", [])),
+            aliases=list(e.get("aliases") or []),
         )
         for e in data.get("entities", [])
         if isinstance(e, dict)
@@ -166,7 +173,7 @@ def extract_from_chunk(
             type=r["type"],
             from_ref=r["from"],
             to_ref=r["to"],
-            confidence=float(r.get("confidence", 0.5)),
+            confidence=_safe_confidence(r.get("confidence", 0.5)),
         )
         for r in data.get("relations", [])
         if isinstance(r, dict)
