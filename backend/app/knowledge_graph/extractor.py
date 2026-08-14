@@ -38,12 +38,15 @@ class KGExtractor:
         embedding_fn: callable(str) -> list[float]
         chunks_loader: callable(document_id) -> list[dict]，每个 dict 含 id/content/char_start/char_end/document_id
         document_loader: callable(document_id) -> str，返回文档全文
-        conflict_detector: ConflictDetector 或 None（Task 10 后注入）
+        conflict_detector: ConflictDetector 或 None（None 时自动构造默认实例）
         """
         self.store = store
         self.embedding_fn = embedding_fn
         self.chunks_loader = chunks_loader
         self.document_loader = document_loader
+        if conflict_detector is None:
+            from app.knowledge_graph.conflict_detector import ConflictDetector
+            conflict_detector = ConflictDetector(store, get_extraction_llm())
         self.conflict_detector = conflict_detector
 
     def run(self, document_id: str) -> ExtractionReport:

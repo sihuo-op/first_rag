@@ -295,3 +295,52 @@ def test_extractor_resolves_article_ref_with_matching_law_name():
     assert report.relations_count == 1
     relation_calls = [c.args for c in store.merge_relation.call_args_list]
     assert ("art-1", "concept-1", "EXPLAINS", {"confidence": 0.9}) in relation_calls
+
+
+# ---------- Task 10: conflict_detector 装配 ----------
+
+def test_extractor_auto_instantiates_conflict_detector_when_none():
+    """conflict_detector=None 时自动构造默认 ConflictDetector（LLM 走 extractor 的 provider）。"""
+    store = _make_store()
+    llm = MagicMock()
+    with patch("app.knowledge_graph.extractor.get_extraction_llm", return_value=llm):
+        extractor = KGExtractor(
+            store=store,
+            embedding_fn=MagicMock(),
+            chunks_loader=MagicMock(),
+            document_loader=MagicMock(),
+            conflict_detector=None,
+        )
+    assert extractor.conflict_detector is not None
+    assert extractor.conflict_detector.store is store
+    assert extractor.conflict_detector.llm is llm
+
+
+def test_extractor_uses_injected_conflict_detector_per_article():
+    """注入的 conflict_detector 被 run() 逐 Article 调用，返回值累加进 report.conflicts_count。"""
+    store = _make_store()
+    llm = MagicMock()
+    detector = MagicMock()
+    detector.detect_for_article.return_value = 2
+
+    with patch("app.knowledge_graph.extractor.parse_document") as mock_parse, \
+         patch("app.knowledge_graph.extractor.extract_from_chunk") as mock_extract, \
+         patch("app.knowledge_graph.extractor.EntityResolver") as mock_resolver_cls, \
+         patch("app.knowledge_graph.extractor.get_extraction_llm", return_value=llm):
+        mock_parse.return_value = _make_parsed(chunk_ids=["c1"])
+        mock_extract.return_value = _make_extraction_result()
+        mock_resolver_cls.return_value = _make_resolver()
+
+        extractor = KGExtractor(
+            store=store,
+            embedding_fn=MagicMock(return_value=[0.1] * 1024),
+            chunks_loader=MagicMock(return_value=[
+                {"id": "c1", "content": "第十九条...", "char_start": 0, "char_end": 100, "document_id": "doc-1"},
+            ]),
+            document_loader=MagicMock(return_value="全文..."),
+            conflict_detector=detector,
+        )
+        report = extractor.run(document_id="doc-1")
+
+    detector.detect_for_article.assert_called_once_with("art-1")
+    assert report.conflicts_count == 2
