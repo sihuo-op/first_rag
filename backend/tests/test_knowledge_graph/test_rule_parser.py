@@ -102,3 +102,29 @@ def test_parse_article_chunk_boundary_no_overlap_when_adjacent():
     chunks = [{"id": "chunk-x", "content": "标题和章名", "char_start": 0, "char_end": art1_start}]
     result = parse_document(SAMPLE_TEXT, document_id="doc-1", chunks=chunks)
     assert "chunk-x" not in result.articles[0].chunk_ids
+
+
+def test_parse_does_not_split_on_in_text_cross_references():
+    # 真实《劳动合同法》第二十一条正文引用了第三十九条/第四十条：
+    # 「…除劳动者有本法第三十九条和第四十条第一项、第二项规定的情形外…」
+    # 只有行首的「第X条」才是条款标题，正文中的交叉引用不得拆分条款。
+    text = (
+        "中华人民共和国劳动合同法\n\n"
+        "第二十条 劳动者在试用期的工资不得低于本单位相同岗位最低档工资"
+        "或者劳动合同约定工资的百分之八十。\n\n"
+        "第二十一条 在试用期中，除劳动者有本法第三十九条和第四十条"
+        "第一项、第二项规定的情形外，用人单位不得解除劳动合同。"
+        "用人单位在试用期解除劳动合同的，应当向劳动者说明理由。\n\n"
+        "第二十二条 劳动合同期满，劳动合同终止。\n"
+    )
+    result = parse_document(text, document_id="doc-4", chunks=[])
+
+    # 不得产生虚假的 39/40 条节点
+    assert [a.article_no for a in result.articles] == [20, 21, 22]
+
+    # 第二十一条的范围必须覆盖正文中的交叉引用（不得在引用处截断）
+    art21 = result.articles[1]
+    assert art21.char_start < text.index("第三十九条")
+    assert art21.char_end > text.index("第四十条")
+    # 且下一条的真实起点（第二十二条）就是它的终点
+    assert art21.char_end == result.articles[2].char_start

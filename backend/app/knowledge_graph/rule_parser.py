@@ -14,7 +14,9 @@ from app.knowledge_graph.schema import ArticleNode, DocumentNode, LawNode
 
 LAW_NAME_PATTERN = re.compile(r"《?([^《》\n]{2,30}(?:法|条例|规定|办法|司法解释))》?")
 EFFECTIVE_DATE_PATTERN = re.compile(r"自(\d{4})年(\d{1,2})月(\d{1,2})日起施行")
-ARTICLE_PATTERN = re.compile(r"第([一二三四五六七八九十百千零\d]+)条")
+# 条款标题锚定行首：正文中的交叉引用（如「本法第三十九条规定的情形」）
+# 不会被误识别为条款标题，法律文本的条款标题独占一行。
+ARTICLE_PATTERN = re.compile(r"^\s*第([一二三四五六七八九十百千零\d]+)条", re.MULTILINE)
 
 # 中文数字转换（简化版）
 CHINESE_NUM = {
