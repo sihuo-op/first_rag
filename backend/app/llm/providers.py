@@ -121,3 +121,19 @@ def get_evaluation_llm() -> BaseChatModel:
         max_tokens=_settings.EVALUATION_LLM_MAX_TOKENS,
     )
     return OpenAIProvider(config).get_llm()
+
+
+def get_extraction_llm() -> BaseChatModel:
+    """抽取用 LLM：温度 0，输出 JSON 格式严格。"""
+    from app.core.config import get_settings
+    from langchain_openai import ChatOpenAI
+    s = get_settings()
+    model = s.KG_EXTRACTION_LLM_MODEL or s.CHAT_MODEL
+    return ChatOpenAI(
+        model=model,
+        openai_api_key=s.CHAT_API_KEY,
+        openai_api_base=s.CHAT_API_BASE,
+        temperature=s.KG_EXTRACTION_LLM_TEMPERATURE,
+        max_tokens=s.KG_EXTRACTION_LLM_MAX_TOKENS,
+        request_timeout=60,
+    )
