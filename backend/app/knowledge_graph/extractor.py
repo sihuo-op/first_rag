@@ -6,12 +6,20 @@ from dataclasses import dataclass
 from app.core.observability import get_tracer
 from app.knowledge_graph.entity_resolver import EntityResolver, ResolvedEntity
 from app.knowledge_graph.llm_extractor import extract_from_chunk, ExtractionResult
-from app.knowledge_graph.rule_parser import parse_document
+from app.knowledge_graph.rule_parser import COUNTRY_PREFIX, parse_document
 from app.llm.providers import get_extraction_llm
 
 logger = logging.getLogger(__name__)
 
 tracer = get_tracer("kg.extract")
+
+
+def _normalize_law_name(name: str) -> str:
+    """法名归一化：去空白 + 去 '中华人民共和国' 前缀，用于 article 引用的跨法比对。"""
+    name = name.strip()
+    if name.startswith(COUNTRY_PREFIX):
+        return name[len(COUNTRY_PREFIX):]
+    return name
 
 
 @dataclass
@@ -148,8 +156,8 @@ class KGExtractor:
 
         # Step 5: 关系解析（resolve from/to 引用）
         for rel in result.relations:
-            from_id = self._resolve_ref(rel.from_ref, name_to_id, article_id_by_no)
-            to_id = self._resolve_ref(rel.to_ref, name_to_id, article_id_by_no)
+            from_id = self._resolve_ref(rel.from_ref, name_to_id, article_id_by_no, parsed.law.name)
+            to_id = self._resolve_ref(rel.to_ref, name_to_id, article_id_by_no, parsed.law.name)
             if from_id and to_id:
                 all_relations.append((from_id, to_id, rel.type, rel.confidence))
 
@@ -174,8 +182,14 @@ class KGExtractor:
         else:
             raise ValueError(f"未支持的节点类型: {resolved.node_type}")
 
-    def _resolve_ref(self, ref: str, name_to_id: dict, article_id_by_no: dict) -> str | None:
-        """解析 'article:劳动合同法:19' / 'concept:试用期' / 'party:用人单位' 引用。"""
+    def _resolve_ref(
+        self, ref: str, name_to_id: dict, article_id_by_no: dict, law_name: str
+    ) -> str | None:
+        """解析 'article:<法名>:<条号>' / 'concept:<name>' / 'party:<name>' 引用。
+
+        article 引用带法名：归一化后与当前文档法名不一致视为跨法引用，直接丢弃
+        （返回 None），避免误链到当前法同号条文或产生自环。
+        """
         parts = ref.split(":", 2)
         if len(parts) < 2:
             return None
@@ -187,6 +201,8 @@ class KGExtractor:
         if ref_type == "article":
             # format: article:<法名>:<条号>
             if len(parts) == 3:
+                if _normalize_law_name(parts[1]) != _normalize_law_name(law_name):
+                    return None
                 try:
                     article_no = int(parts[2])
                 except ValueError:

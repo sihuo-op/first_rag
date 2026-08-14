@@ -72,6 +72,28 @@ def _make_resolver():
     return resolver
 
 
+def _run_extractor(store: MagicMock, extraction_result) -> ExtractionReport:
+    """用给定抽取结果跑一遍管道（单 chunk），返回 ExtractionReport。"""
+    llm = MagicMock()
+    with patch("app.knowledge_graph.extractor.parse_document") as mock_parse, \
+         patch("app.knowledge_graph.extractor.extract_from_chunk") as mock_extract, \
+         patch("app.knowledge_graph.extractor.EntityResolver") as mock_resolver_cls, \
+         patch("app.knowledge_graph.extractor.get_extraction_llm", return_value=llm):
+        mock_parse.return_value = _make_parsed(chunk_ids=["c1"])
+        mock_extract.return_value = extraction_result
+        mock_resolver_cls.return_value = _make_resolver()
+        extractor = KGExtractor(
+            store=store,
+            embedding_fn=MagicMock(return_value=[0.1] * 1024),
+            chunks_loader=MagicMock(return_value=[
+                {"id": "c1", "content": "第十九条...", "char_start": 0, "char_end": 100, "document_id": "doc-1"},
+            ]),
+            document_loader=MagicMock(return_value="全文..."),
+            conflict_detector=None,
+        )
+        return extractor.run(document_id="doc-1")
+
+
 def test_extractor_pipeline_calls_all_steps():
     store = _make_store()
     embedding_fn = MagicMock(return_value=[0.1] * 1024)
@@ -227,3 +249,49 @@ def test_extractor_skips_relation_when_ref_unresolvable():
     assert report.relations_count == 0
     # 只剩规则写入的 Law/Document -> Article 关系
     assert store.merge_relation.call_count == 2
+
+
+def test_extractor_drops_cross_law_article_refs():
+    """法名不匹配的 article 引用必须丢弃：不得把跨法 CITES 误链到当前法同号条文。"""
+    store = _make_store()
+    cross_result = ExtractionResult(
+        entities=[ExtractedEntity(type="Concept", name="试用期")],
+        relations=[
+            ExtractedRelation(
+                type="CITES",
+                from_ref="article:劳动合同法:19",
+                to_ref="article:劳动法:19",  # 其它法；当前文档同样有第 19 条，不能误链
+                confidence=0.9,
+            ),
+        ],
+    )
+
+    report = _run_extractor(store, cross_result)
+
+    assert report.relations_count == 0
+    relation_calls = [c.args for c in store.merge_relation.call_args_list]
+    assert all(args[2] != "CITES" for args in relation_calls)
+    # 只剩规则写入的 Law/Document -> Article 关系
+    assert store.merge_relation.call_count == 2
+
+
+def test_extractor_resolves_article_ref_with_matching_law_name():
+    """法名匹配的 article 引用仍正常解析；'中华人民共和国' 前缀变体归一化后同样匹配。"""
+    store = _make_store()
+    result = ExtractionResult(
+        entities=[ExtractedEntity(type="Concept", name="试用期")],
+        relations=[
+            ExtractedRelation(
+                type="EXPLAINS",
+                from_ref="article:中华人民共和国劳动合同法:19",  # 带国名前缀的变体
+                to_ref="concept:试用期",
+                confidence=0.9,
+            ),
+        ],
+    )
+
+    report = _run_extractor(store, result)
+
+    assert report.relations_count == 1
+    relation_calls = [c.args for c in store.merge_relation.call_args_list]
+    assert ("art-1", "concept-1", "EXPLAINS", {"confidence": 0.9}) in relation_calls
