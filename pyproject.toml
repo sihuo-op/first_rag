@@ -10,6 +10,7 @@ dependencies = [
     "opentelemetry-instrumentation-httpx",
     "opentelemetry-instrumentation-sqlalchemy",
     "neo4j>=5.20",
+    "tenacity>=8.0",
 ]
 
 [project.optional-dependencies]
