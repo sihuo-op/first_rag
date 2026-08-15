@@ -1,4 +1,5 @@
 """KGExtractor 管道编排测试：DB/LLM/Neo4j 全部 mock。"""
+import logging
 from unittest.mock import MagicMock, patch
 
 from app.knowledge_graph.entity_resolver import ResolvedEntity
@@ -203,6 +204,33 @@ def test_extractor_continues_on_chunk_failure():
     store.upsert_concept.assert_called_once()
     assert report.entities_count == 1
     assert report.relations_count >= 1
+
+
+def test_extractor_run_never_raises_on_pipeline_failure(caplog):
+    """run() 是 BackgroundTasks 直接调度的入口：管道抛异常（如非法规文档触发
+    parse_document 的 ValueError）也不得逃逸，而是记录错误日志并返回带
+    error 字段的失败报告，duration_ms 仍有值。"""
+    store = _make_store()
+    extractor = KGExtractor(
+        store=store,
+        embedding_fn=MagicMock(),
+        chunks_loader=MagicMock(),
+        document_loader=MagicMock(),
+        conflict_detector=MagicMock(),
+    )
+
+    with patch.object(KGExtractor, "_run_impl", side_effect=ValueError("非法规文档")), \
+         caplog.at_level(logging.ERROR, logger="app.knowledge_graph.extractor"):
+        report = extractor.run(document_id="doc-1")
+
+    assert isinstance(report, ExtractionReport)
+    assert report.document_id == "doc-1"
+    assert report.error == "ValueError: 非法规文档"
+    assert report.entities_count == 0
+    assert report.relations_count == 0
+    assert report.duration_ms >= 0
+    # 错误日志包含 document_id，便于排查上传触发失败
+    assert any("document_id=doc-1" in r.getMessage() for r in caplog.records)
 
 
 def test_extractor_skips_relation_when_ref_unresolvable():

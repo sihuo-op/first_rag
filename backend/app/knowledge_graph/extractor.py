@@ -29,6 +29,7 @@ class ExtractionReport:
     relations_count: int = 0
     conflicts_count: int = 0
     duration_ms: int = 0
+    error: str = ""
 
 
 class KGExtractor:
@@ -50,10 +51,28 @@ class KGExtractor:
         self.conflict_detector = conflict_detector
 
     def run(self, document_id: str) -> ExtractionReport:
+        """管道入口，永不抛出：任何异常记入 report.error 并返回失败报告。
+
+        本方法被 Starlette BackgroundTasks 直接调度（上传触发），抛异常会产生
+        未处理的 ASGI traceback 并中断同一响应中后续排队的后台任务；非法规
+        文档上传（parse_document 抛 ValueError）或文档在任务运行前被删除都
+        会走到这里。回填 CLI 也直接调用本方法并依赖 error 字段上报失败。
+        """
         start = time.time()
-        with tracer.start_as_current_span("kg.extract.pipeline") as span:
-            span.set_attribute("document.id", document_id)
-            report = self._run_impl(document_id, span)
+        report: ExtractionReport | None = None
+        try:
+            with tracer.start_as_current_span("kg.extract.pipeline") as span:
+                span.set_attribute("document.id", document_id)
+                report = self._run_impl(document_id, span)
+        except Exception as exc:  # noqa: BLE001 - 后台任务入口必须吞掉一切异常
+            logger.error(
+                "kg.extract pipeline failed document_id=%s: %s", document_id, exc,
+                exc_info=exc,
+            )
+            report = ExtractionReport(
+                document_id=document_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
         report.duration_ms = int((time.time() - start) * 1000)
         return report
 
