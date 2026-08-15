@@ -2,6 +2,7 @@ from typing import Optional, List, Dict, Any
 import os
 import uuid
 import hashlib
+import logging
 from sqlalchemy.orm import Session
 from fastapi import UploadFile, BackgroundTasks
 from app.entities.database import Document, DocumentChunk, DocumentStatus, ChunkType
@@ -12,6 +13,11 @@ from app.rag.vector_store import MilvusStore
 from app.rag.retriever import HybridRetriever
 from app.services.conflict_service import ConflictService
 from app.core.config import get_settings
+from app.core.dependencies import get_vector_store
+from app.knowledge_graph.extractor import KGExtractor
+from app.knowledge_graph.graph_store import get_graph_store
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -193,6 +199,10 @@ class DocumentService:
                 self.db.commit()
                 background_tasks.add_task(self._run_conflict_detection, doc_id)
 
+            # 触发 KG 抽取（后台任务，失败不影响文档状态）
+            if background_tasks:
+                _trigger_kg_extraction(str(doc_id), background_tasks)
+
             return True
 
         except Exception as e:
@@ -248,3 +258,52 @@ class DocumentService:
         return self.db.query(DocumentChunk).filter(
             DocumentChunk.document_id == doc_id
         ).order_by(DocumentChunk.chunk_index).all()
+
+
+# ---------------------------------------------------------------------------
+# KG 抽取触发（文档处理成功后由 process_document 调用）
+# ---------------------------------------------------------------------------
+
+def _load_chunks_for_kg(doc_id: str) -> list[dict]:
+    """加载文档 chunks 供 KG 抽取（独立 db session，后台线程安全）。"""
+    from app.db.session import SessionLocal
+    with SessionLocal() as db:
+        chunks = db.query(DocumentChunk).filter_by(document_id=int(doc_id)).all()
+        return [
+            {
+                "id": c.id,
+                "content": c.content,
+                "char_start": c.char_start or 0,
+                "char_end": c.char_end or 0,
+                "document_id": c.document_id,
+            }
+            for c in chunks
+        ]
+
+
+def _load_document_text_for_kg(doc_id: str) -> str:
+    """重新解析文件获取全文（Document 无 full_text 字段）。"""
+    from app.db.session import SessionLocal
+    with SessionLocal() as db:
+        doc = db.query(Document).filter(Document.id == int(doc_id)).first()
+        if not doc:
+            return ""
+        parser = get_parser(doc.file_type)
+        content, _ = parser.parse(doc.file_path)
+        return content
+
+
+def _trigger_kg_extraction(document_id: str, background_tasks) -> None:
+    """文档处理成功后异步触发 KG 抽取。KG 侧任何失败只打日志，不影响文档流程。"""
+    try:
+        if not get_settings().KG_ENABLED:
+            return
+        extractor = KGExtractor(
+            store=get_graph_store(),
+            embedding_fn=get_vector_store().embed_query,
+            chunks_loader=_load_chunks_for_kg,
+            document_loader=_load_document_text_for_kg,
+        )
+        background_tasks.add_task(extractor.run, document_id=document_id)
+    except Exception as e:
+        logger.warning(f"KG extraction trigger failed for document {document_id}: {e}")
