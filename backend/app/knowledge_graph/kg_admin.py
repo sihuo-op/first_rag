@@ -5,15 +5,20 @@
   绝不自动 supersede 任何 Article；supersede 是独立的人工决策。
 - 冲突列表返回两条 Article 全文（ArticleNode.content，Task 10 起落库），
   供审核人对照。
+- 全部端点要求 admin 身份（与 app/api/admin.py 同一依赖
+  get_current_admin_user）；confirm/dismiss 将审核人 users.id 写入
+  边的 reviewed_by 属性（对齐 chunk 审核的 reviewed_by 约定）。
 """
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.core.security import get_current_admin_user
+from app.entities.database import User
 from app.knowledge_graph.exceptions import KGError
 from app.knowledge_graph.graph_store import get_graph_store
-from app.knowledge_graph.schema import ConflictStatus
+from app.knowledge_graph.schema import ArticleStatus, ConflictStatus
 
 router = APIRouter(prefix="/api/v1/admin/kg", tags=["kg-admin"])
 
@@ -35,7 +40,11 @@ class SupersedeRequest(BaseModel):
 
 
 @router.get("/conflicts")
-def list_conflicts(status: str = ConflictStatus.PENDING_REVIEW.value, store=Depends(_get_store)):
+def list_conflicts(
+    status: str = ConflictStatus.PENDING_REVIEW.value,
+    store=Depends(_get_store),
+    current_user: User = Depends(get_current_admin_user),
+):
     valid_statuses = {s.value for s in ConflictStatus}
     if status not in valid_statuses:
         raise HTTPException(
@@ -60,18 +69,25 @@ def list_conflicts(status: str = ConflictStatus.PENDING_REVIEW.value, store=Depe
 
 
 @router.post("/conflicts/{edge_id}/confirm")
-def confirm_conflict(edge_id: int, req: ReviewRequest, store=Depends(_get_store)):
+def confirm_conflict(
+    edge_id: int,
+    req: ReviewRequest,
+    store=Depends(_get_store),
+    current_user: User = Depends(get_current_admin_user),
+):
     with store.session() as s:
         summary = s.run(
             """
             MATCH ()-[r:CONFLICTS_WITH]->()
             WHERE id(r) = $edge_id
             SET r.status = $status,
+                r.reviewed_by = $reviewed_by,
                 r.reviewed_at = $now,
                 r.review_note = $note
             """,
             edge_id=edge_id,
             status=ConflictStatus.CONFIRMED.value,
+            reviewed_by=current_user.id,
             now=datetime.now().isoformat(),
             note=req.review_note,
         ).consume()
@@ -81,18 +97,25 @@ def confirm_conflict(edge_id: int, req: ReviewRequest, store=Depends(_get_store)
 
 
 @router.post("/conflicts/{edge_id}/dismiss")
-def dismiss_conflict(edge_id: int, req: ReviewRequest, store=Depends(_get_store)):
+def dismiss_conflict(
+    edge_id: int,
+    req: ReviewRequest,
+    store=Depends(_get_store),
+    current_user: User = Depends(get_current_admin_user),
+):
     with store.session() as s:
         summary = s.run(
             """
             MATCH ()-[r:CONFLICTS_WITH]->()
             WHERE id(r) = $edge_id
             SET r.status = $status,
+                r.reviewed_by = $reviewed_by,
                 r.reviewed_at = $now,
                 r.review_note = $note
             """,
             edge_id=edge_id,
             status=ConflictStatus.DISMISSED.value,
+            reviewed_by=current_user.id,
             now=datetime.now().isoformat(),
             note=req.review_note,
         ).consume()
@@ -102,7 +125,12 @@ def dismiss_conflict(edge_id: int, req: ReviewRequest, store=Depends(_get_store)
 
 
 @router.post("/articles/{article_id}/supersede")
-def supersede_article(article_id: str, req: SupersedeRequest, store=Depends(_get_store)):
+def supersede_article(
+    article_id: str,
+    req: SupersedeRequest,
+    store=Depends(_get_store),
+    current_user: User = Depends(get_current_admin_user),
+):
     with store.session() as s:
         summary = s.run(
             """
@@ -113,7 +141,7 @@ def supersede_article(article_id: str, req: SupersedeRequest, store=Depends(_get
                 a.superseded_at = $now
             """,
             article_id=article_id,
-            status="superseded",
+            status=ArticleStatus.SUPERSEDED.value,
             reason=req.reason,
             conflict_edge_id=req.conflict_edge_id,
             now=datetime.now().isoformat(),
@@ -124,7 +152,11 @@ def supersede_article(article_id: str, req: SupersedeRequest, store=Depends(_get
 
 
 @router.get("/graph")
-def get_subgraph(concept_id: str, store=Depends(_get_store)):
+def get_subgraph(
+    concept_id: str,
+    store=Depends(_get_store),
+    current_user: User = Depends(get_current_admin_user),
+):
     """Concept 周围 1..2 跳子图（可视化/调试用）。"""
     with store.session() as s:
         result = s.run(
@@ -155,7 +187,10 @@ def get_subgraph(concept_id: str, store=Depends(_get_store)):
 
 
 @router.get("/stats")
-def get_stats(store=Depends(_get_store)):
+def get_stats(
+    store=Depends(_get_store),
+    current_user: User = Depends(get_current_admin_user),
+):
     with store.session() as s:
         rec = s.run(
             """
