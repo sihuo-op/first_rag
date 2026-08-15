@@ -16,7 +16,11 @@ LAW_NAME_PATTERN = re.compile(r"《?([^《》\n]{2,30}(?:法|条例|规定|办�
 EFFECTIVE_DATE_PATTERN = re.compile(r"自(\d{4})年(\d{1,2})月(\d{1,2})日起施行")
 # 条款标题锚定行首：正文中的交叉引用（如「本法第三十九条规定的情形」）
 # 不会被误识别为条款标题，法律文本的条款标题独占一行。
-ARTICLE_PATTERN = re.compile(r"^\s*第([一二三四五六七八九十百千零\d]+)条", re.MULTILINE)
+# head 组从「第」开始（不含行首空白）：char_start 定位到「第」，
+# 保证 text[char_start:char_end] 即条款原文（content 字段直接喂给 LLM 冲突判定）。
+ARTICLE_PATTERN = re.compile(
+    r"^\s*(?P<head>第(?P<no>[一二三四五六七八九十百千零\d]+)条)", re.MULTILINE
+)
 
 # 中文数字转换（简化版）
 CHINESE_NUM = {
@@ -103,9 +107,10 @@ def parse_document(text: str, document_id: str, chunks: list[dict]) -> ParsedDoc
     articles = []
     matches = list(ARTICLE_PATTERN.finditer(text))
     for i, m in enumerate(matches):
-        article_no = chinese_to_int(m.group(1))
-        char_start = m.start()
-        char_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        article_no = chinese_to_int(m.group("no"))
+        # char_start 从「第」字起（跳过行首空白），content/content_hash 均基于此切片
+        char_start = m.start("head")
+        char_end = matches[i + 1].start("head") if i + 1 < len(matches) else len(text)
 
         # 通过 char range overlap 找 chunk_ids
         chunk_ids = [
@@ -122,6 +127,7 @@ def parse_document(text: str, document_id: str, chunks: list[dict]) -> ParsedDoc
             law_id=law.id,
             article_no=article_no,
             content_hash=content_hash,
+            content=article_text,
             chunk_ids=chunk_ids,
             status="active",
             char_start=char_start,

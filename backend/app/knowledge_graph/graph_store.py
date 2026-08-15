@@ -105,12 +105,14 @@ class _Neo4jStoreWriteMixin:
                     """
                     MERGE (n:Article {id: $id})
                     SET n.law_id = $law_id, n.article_no = $article_no,
-                        n.content_hash = $content_hash, n.chunk_ids = $chunk_ids,
+                        n.content_hash = $content_hash, n.content = $content,
+                        n.chunk_ids = $chunk_ids,
                         n.status = $status, n.char_start = $char_start, n.char_end = $char_end
                     RETURN n.id AS id
                     """,
                     id=article.id, law_id=article.law_id, article_no=article.article_no,
-                    content_hash=article.content_hash, chunk_ids=article.chunk_ids,
+                    content_hash=article.content_hash, content=article.content,
+                    chunk_ids=article.chunk_ids,
                     status=article.status, char_start=article.char_start, char_end=article.char_end,
                 ).single()
             return article.id

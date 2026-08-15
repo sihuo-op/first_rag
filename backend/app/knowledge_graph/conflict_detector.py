@@ -44,6 +44,13 @@ def _safe_confidence(raw) -> float:
         return 0.0
 
 
+def _safe_bool(raw) -> bool:
+    """is_conflict 宽松解析：LLM 偶尔回字符串 ``"false"``，朴素 bool() 会误判为 True。"""
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("true", "yes", "1")
+    return bool(raw)
+
+
 class ConflictDetector:
     def __init__(self, store, llm):
         self.store = store
@@ -94,7 +101,7 @@ class ConflictDetector:
                 WHERE existing.id <> $article_id
                   AND NOT (new)-[:CONFLICTS_WITH]-(existing)
                 RETURN existing.id AS existing_id, c.name AS concept_name, c.id AS concept_id,
-                       new.content_hash AS new_content, existing.content_hash AS existing_content
+                       new.content AS new_content, existing.content AS existing_content
                 """,
                 article_id=article_id,
             )
@@ -106,8 +113,12 @@ class ConflictDetector:
         LLM 调用失败重试 MAX_LLM_RETRIES 次，全部失败按"无冲突"处理（宁缺勿滥）；
         输出非 JSON / confidence 非数值同样按解析失败容错。
         """
+        # or "" 兜底：旧数据的 Article 节点可能没有 content 属性（Cypher 返回 null），
+        # None[:500] 会 TypeError 并炸掉整条 extractor 管道。
         prompt = CONFLICT_PROMPT_TEMPLATE.format(
-            concept_name=concept, new_content=new_content[:500], existing_content=existing_content[:500],
+            concept_name=concept,
+            new_content=(new_content or "")[:500],
+            existing_content=(existing_content or "")[:500],
         )
         with tracer.start_as_current_span("kg.extract.conflict_judge") as jspan:
             response = self._invoke_with_retry(prompt)
@@ -128,7 +139,7 @@ class ConflictDetector:
                 return False, str(exc), 0.0
 
             return (
-                bool(data.get("is_conflict")),
+                _safe_bool(data.get("is_conflict")),
                 str(data.get("reason", "")),
                 _safe_confidence(data.get("confidence", 0.0)),
             )

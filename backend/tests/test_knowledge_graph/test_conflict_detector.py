@@ -13,7 +13,13 @@ from app.knowledge_graph.conflict_detector import ConflictDetector
 from app.knowledge_graph.schema import ConflictStatus
 
 
-def _related_row(existing_id="art-2", new_content="A", existing_content="B"):
+def _related_row(
+    existing_id="art-2",
+    new_content="第十九条 劳动合同期限三个月以上不满一年的，试用期不得超过一个月。",
+    existing_content="第十九条 试用期最长不得超过六个月。",
+):
+    # new_content/existing_content 与生产 Cypher 投影对齐：条款原文（n.content），
+    # 而非 content_hash（sha256 hex 摘要，对 LLM 判定毫无意义）。
     return {
         "existing_id": existing_id,
         "concept_name": "试用期",
@@ -152,6 +158,18 @@ def test_candidate_query_uses_explains_and_excludes_existing_conflicts():
     assert run_mock.call_args.kwargs == {"article_id": "art-1"}
 
 
+def test_candidate_query_projects_article_content_not_hash():
+    """候选查询必须投影 n.content（条款原文）给 LLM，绝不能用 content_hash。"""
+    store = _make_store([])
+    detector = ConflictDetector(store, llm=MagicMock())
+    detector.detect_for_article("art-1")
+
+    query = store.session.return_value.__enter__.return_value.run.call_args.args[0]
+    assert "new.content AS new_content" in query
+    assert "existing.content AS existing_content" in query
+    assert "content_hash" not in query
+
+
 # ---------- LLM 重试：失败重试 2 次（共 3 次尝试） ----------
 
 def test_llm_failure_retries_then_succeeds():
@@ -238,10 +256,29 @@ def test_null_content_treated_as_parse_failure():
     assert count == 0
 
 
+def test_string_false_is_conflict_treated_as_false():
+    """LLM 偶尔回字符串 "false"：朴素 bool("false") 是 True，必须宽松解析为 False。"""
+    store = _make_store([_related_row()])
+
+    with patch(
+        "app.knowledge_graph.conflict_detector.invoke_llm_threadsafe",
+        return_value=_llm_response({"is_conflict": "false", "reason": "互补", "confidence": 0.8}),
+    ):
+        detector = ConflictDetector(store, llm=MagicMock())
+        count = detector.detect_for_article("art-1")
+
+    assert count == 0
+    store.merge_relation.assert_not_called()
+
+
 # ---------- LLM 提示词包含双方内容 ----------
 
-def test_llm_prompt_contains_concept_and_contents():
-    store = _make_store([_related_row(new_content="最长6个月", existing_content="最长3个月")])
+def test_llm_prompt_contains_article_text_not_hashes():
+    """提示词必须携带条款原文（n.content）：含具体条文文本，且不含 hash 摘要。"""
+    store = _make_store([_related_row(
+        new_content="第十九条 劳动合同期限三个月以上不满一年的，试用期不得超过一个月。",
+        existing_content="第十九条 试用期最长不得超过六个月。",
+    )])
 
     with patch(
         "app.knowledge_graph.conflict_detector.invoke_llm_threadsafe",
@@ -252,5 +289,8 @@ def test_llm_prompt_contains_concept_and_contents():
 
     prompt = mock_invoke.call_args.args[1][0].content
     assert "试用期" in prompt
-    assert "最长6个月" in prompt
-    assert "最长3个月" in prompt
+    assert "不得超过一个月" in prompt
+    assert "不得超过六个月" in prompt
+    # 回归：不得再出现 hex hash 摘要（旧 bug 把 content_hash 当"条文内容"喂给 LLM）
+    import re as _re
+    assert not _re.search(r"\b[0-9a-f]{32,}\b", prompt)

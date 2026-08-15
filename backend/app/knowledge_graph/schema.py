@@ -51,6 +51,7 @@ class ArticleNode(BaseModel):
     law_id: str
     article_no: int
     content_hash: str
+    content: str = ""  # 条款原文（text[char_start:char_end]），LLM 冲突判定用
     chunk_ids: list[str] = Field(default_factory=list)
     status: str = "active"
     char_start: int

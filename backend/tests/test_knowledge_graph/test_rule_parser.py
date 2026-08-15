@@ -42,6 +42,17 @@ def test_parse_articles_have_char_range():
         assert art.char_end <= len(SAMPLE_TEXT)
 
 
+def test_parse_articles_content_populated():
+    """ArticleNode.content 必须携带条款原文：conflict_detector 把它喂给 LLM 做冲突判定。"""
+    result = parse_document(SAMPLE_TEXT, document_id="doc-1", chunks=[])
+    assert len(result.articles) >= 1
+    for art in result.articles:
+        assert art.content, "article.content 不得为空"
+        # 与 char range 定位的文本切片一致
+        assert art.content == SAMPLE_TEXT[art.char_start:art.char_end]
+        assert art.content.startswith("第")
+
+
 def test_parse_articles_chunk_ids_filled_from_overlap():
     # 造一个 chunk 覆盖第1条
     chunks = [{

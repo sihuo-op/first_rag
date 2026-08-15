@@ -52,6 +52,23 @@ def test_upsert_article_idempotent(graph_store):
         assert result.single()["c"] == 1
 
 
+def test_upsert_article_persists_content(graph_store):
+    """ArticleNode.content 必须落库：conflict_detector 的候选查询投影 new/existing.content。"""
+    article = ArticleNode(
+        id="art-c", law_id="law-1", article_no=19, content_hash="abc",
+        content="第十九条 劳动合同期限三个月以上不满一年的，试用期不得超过一个月。",
+        chunk_ids=[], status="active", char_start=0, char_end=100,
+    )
+    graph_store.upsert_article(article)
+    with graph_store.session() as s:
+        result = s.run(
+            "MATCH (n:Article {id: $id}) RETURN n.content AS content", id="art-c",
+        )
+        assert result.single()["content"] == (
+            "第十九条 劳动合同期限三个月以上不满一年的，试用期不得超过一个月。"
+        )
+
+
 # ---------------------------------------------------------------------------
 # upsert_concept（含 Task 7 回归：别名去重）
 # ---------------------------------------------------------------------------
