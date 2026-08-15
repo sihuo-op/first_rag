@@ -8,6 +8,7 @@ Milvus 向量数据库封装，集成了 embedding 模型，负责：
 """
 
 from typing import List, Dict, Any, Optional
+import json
 import logging
 import threading
 import uuid
@@ -442,6 +443,40 @@ class MilvusStore:
             "embedding": row["embedding"]
         }])
         collection.flush()
+
+    def get_chunks_by_ids(self, collection_name: str, chunk_ids: List[str]) -> List[Dict[str, Any]]:
+        """根据 chunk_id 列表批量获取 chunks（KG 检索路径反查用）。
+
+        Args:
+            collection_name: 集合名
+            chunk_ids: chunk 主键（VARCHAR id）列表
+
+        Returns:
+            chunk 列表，每项含 id / document_id / chunk_type / content /
+            content_hash / status；ids 为空直接返回 []。
+        """
+        if not chunk_ids:
+            return []
+        self.connect()
+        full_name = self._get_full_name(collection_name)
+        collection = self._get_collection(full_name)
+        # json.dumps 保证字符串 id 带合法双引号：id in ["a", "b"]
+        results = collection.query(
+            expr=f"id in {json.dumps(list(chunk_ids))}",
+            output_fields=["id", "document_id", "chunk_type", "content", "content_hash", "status"],
+            timeout=5,
+        )
+        return [
+            {
+                "id": r.get("id"),
+                "document_id": r.get("document_id"),
+                "chunk_type": r.get("chunk_type", "small"),
+                "content": r.get("content", ""),
+                "content_hash": r.get("content_hash"),
+                "status": r.get("status"),
+            }
+            for r in results
+        ]
 
     def delete_vectors(self, collection_name: str, ids: Optional[List[str]] = None, filter_expr: Optional[str] = None) -> None:
         """
