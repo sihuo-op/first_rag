@@ -10,6 +10,7 @@ os.environ["TMPDIR"] = str(JIEBA_CACHE_DIR)
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, documents, chat, admin
+from app.knowledge_graph import kg_admin  # KG 审核/后台 API
 from app.db.init_db import init_db
 from app.core.config import get_settings
 from app.entities.schemas import HealthResponse
@@ -47,6 +48,9 @@ app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
+
+if settings.KG_ENABLED:
+    app.include_router(kg_admin.router)
 
 # OTel 初始化（必须在所有 middleware 和 router 注册之后，使 OTel 成为最外层 middleware）
 from app.core.observability import setup_otel, instrument_app
