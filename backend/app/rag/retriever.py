@@ -146,13 +146,15 @@ class HybridRetriever(BaseRetriever):
         rrf_k: int = 60,  # RRF 平滑常数
         use_reranker: bool = True,
         reranker_model: str = "BAAI/bge-reranker-base",
-        top_n: int = 5
+        top_n: int = 5,
+        kg_retriever=None,  # KGRetriever 实例或 None（None 时为旧两路行为）
     ):
         self.vector_store = vector_store
         self.sparse_retriever = sparse_retriever
         self.rrf_k = rrf_k  # RRF 参数
         self.use_reranker = use_reranker
         self.top_n = top_n
+        self.kg_retriever = kg_retriever
 
         if use_reranker:
             self.reranker = Reranker(model_name=reranker_model)
@@ -219,10 +221,30 @@ class HybridRetriever(BaseRetriever):
         debug_info["detail"]["sparse_results"] = [{"content": r.get("content", ""), "sparse_score": round(r.get("sparse_score", 0), 4)} for r in sparse_results]
         debug_info["steps"].append({"step": "sparse_search", "desc": "稀疏检索（BM25）", "count": len(sparse_results), "time_s": round(sparse_time, 3)})
 
-        # 3. RRF 排名融合
+        # 3. KG 检索（第三路，复用已算好的查询向量，失败回退为空结果）
+        kg_results = []
+        if self.kg_retriever is not None:
+            with tracer.start_as_current_span("rag.retrieve.kg") as kg_span:
+                kg_start = time.time()
+                try:
+                    kg_results = self.kg_retriever.retrieve(query=query, query_embedding=query_vector)
+                    kg_span.set_attribute("retrieve.kg_count", len(kg_results))
+                except Exception as e:  # noqa: BLE001 - KG 失败绝不拖垮主检索链路
+                    kg_span.record_exception(e)
+                    kg_span.set_attribute("retrieve.kg_failed", True)
+                    kg_results = []
+                kg_time = time.time() - kg_start
+                kg_span.set_attribute("retrieve.kg_time_s", round(kg_time, 3))
+            # RRF 按排名融合，KG 结果先按 kg_score 降序保证排名有意义
+            kg_results = sorted(kg_results, key=lambda r: r.get("kg_score", 0), reverse=True)
+            debug_info["kg_results"] = len(kg_results)
+            debug_info["detail"]["kg_results"] = [{"content": r.get("content", "")[:100], "kg_score": round(r.get("kg_score", 0), 4)} for r in kg_results]
+            debug_info["steps"].append({"step": "kg_search", "desc": "知识图谱检索", "count": len(kg_results), "time_s": round(kg_time, 3)})
+
+        # 4. RRF 排名融合（dense + sparse + KG）
         with tracer.start_as_current_span("rag.retrieve.merge") as span:
             merge_start = time.time()
-            all_results = self._merge_with_rrf(dense_results, sparse_results, top_k)
+            all_results = self._merge_with_rrf(dense_results, sparse_results, kg_results, top_k=top_k)
             merge_time = time.time() - merge_start
             span.set_attribute("retrieve.merged_count", len(all_results))
             span.set_attribute("retrieve.rrf_k", self.rrf_k)
@@ -232,10 +254,10 @@ class HybridRetriever(BaseRetriever):
         ]
         debug_info["steps"].append({"step": "merge", "desc": f"RRF 排名融合（k={self.rrf_k}）", "count": len(all_results), "time_s": round(merge_time, 3)})
 
-        # 4. 去重（精确内容 + 父子块晋升）
+        # 5. 去重（精确内容 + 父子块晋升）
         with tracer.start_as_current_span("rag.retrieve.dedup") as span:
             dedup_start = time.time()
-            # 4a. 精确内容去重
+            # 5a. 精确内容去重
             exact_dedup = []
             seen_contents = set()
             for result in sorted(all_results, key=lambda x: x.get("rrf_score", 0), reverse=True):
@@ -243,7 +265,7 @@ class HybridRetriever(BaseRetriever):
                 if content not in seen_contents:
                     seen_contents.add(content)
                     exact_dedup.append(result)
-            # 4b. 父子块晋升：2+ smalls 同属一个 medium -> 丢 smalls 保 medium；mediums->large 同理
+            # 5b. 父子块晋升：2+ smalls 同属一个 medium -> 丢 smalls 保 medium；mediums->large 同理
             unique_results = self._dedup_by_containment(exact_dedup)
             dedup_time = time.time() - dedup_start
             promo_stats = getattr(self, "_last_promotion_stats", {"small_to_medium": 0, "medium_to_large": 0})
@@ -254,7 +276,7 @@ class HybridRetriever(BaseRetriever):
         debug_info["detail"]["deduped_results"] = [{"content": r.get("content", "")[:200], "rrf_score": round(r.get("rrf_score", 0), 4), "chunk_type": r.get("chunk_type", "unknown")} for r in unique_results]
         debug_info["steps"].append({"step": "dedup", "desc": f"去重+晋升（small->medium: {promo_stats['small_to_medium']} 次, medium->large: {promo_stats['medium_to_large']} 次, 丢弃 {len(exact_dedup) - len(unique_results)} 个子块）", "count": len(unique_results), "time_s": round(dedup_time, 3)})
 
-        # 5. 重排序
+        # 6. 重排序
         rerank_time = 0
         if self.use_reranker and self.reranker and len(unique_results) > 0:
             with tracer.start_as_current_span("rag.retrieve.rerank") as span:
@@ -357,45 +379,40 @@ class HybridRetriever(BaseRetriever):
         promoted.sort(key=lambda x: x.get("rrf_score", 0), reverse=True)
         return promoted
 
-    def _merge_with_rrf(self, dense_results: List[Dict], sparse_results: List[Dict], top_k: int) -> List[Dict]:
+    def _merge_with_rrf(self, *result_lists, top_k: int = 10) -> List[Dict]:
         """
-        使用 RRF（Reciprocal Rank Fusion）融合两个检索器的结果
-        
+        使用 RRF（Reciprocal Rank Fusion）融合多路检索器的结果（2-3 路）
+
         RRF 公式：score(d) = Σ(1 / (k + rank_i(d)))
-        
+
+        按内容去重合并（保持与既有两路行为一致）：稀疏检索结果没有 id 字段
+        （metadata 只有 document_id/chunk_type），content 是唯一可靠的跨路合并键。
+
         Args:
-            dense_results: 向量检索结果（已按分数降序）
-            sparse_results: BM25 检索结果（已按分数降序）
-            top_k: 取前 top_k 个结果用于融合
-        
+            *result_lists: 各路检索结果列表（各自已按分数降序），如
+                (dense_results, sparse_results[, kg_results])
+            top_k: 每路取前 top_k 个结果参与融合
+
         Returns:
-            融合后的结果列表（带 rrf_score）
+            融合后的结果列表（带 rrf_score，降序）
         """
         # 创建内容到文档的映射
         content_map: Dict[str, Dict] = {}
-        
-        # 处理密集检索结果（按排名计算 RRF 分数）
-        for rank, result in enumerate(dense_results[:top_k], start=1):
-            content = result.get("content", "")
-            if content not in content_map:
-                content_map[content] = result.copy()
-                content_map[content]["rrf_score"] = 0.0
-            # RRF 公式：1 / (k + rank)
-            content_map[content]["rrf_score"] += 1 / (self.rrf_k + rank)
-        
-        # 处理稀疏检索结果（按排名计算 RRF 分数）
-        for rank, result in enumerate(sparse_results[:top_k], start=1):
-            content = result.get("content", "")
-            if content not in content_map:
-                content_map[content] = result.copy()
-                content_map[content]["rrf_score"] = 0.0
-            # RRF 公式：1 / (k + rank)
-            content_map[content]["rrf_score"] += 1 / (self.rrf_k + rank)
-        
+
+        # 逐路累加 RRF 分数（按各路内排名）
+        for results in result_lists:
+            for rank, result in enumerate(results[:top_k], start=1):
+                content = result.get("content", "")
+                if content not in content_map:
+                    content_map[content] = result.copy()
+                    content_map[content]["rrf_score"] = 0.0
+                # RRF 公式：1 / (k + rank)
+                content_map[content]["rrf_score"] += 1 / (self.rrf_k + rank)
+
         # 转换为列表并按 RRF 分数降序排序
         results = list(content_map.values())
         results.sort(key=lambda x: x.get("rrf_score", 0), reverse=True)
-        
+
         return results
 
     def add_to_sparse_index(self, documents: List[str], metadata_list: List[Dict]) -> None:

@@ -43,6 +43,29 @@ def get_sparse_retriever() -> SparseRetriever:
     return _sparse_retriever_instance
 
 
+def _build_kg_retriever(vector_store: MilvusStore):
+    """按配置构造 KGRetriever（KG 第三路检索）。
+
+    - KG_ENABLED=False：返回 None（HybridRetriever 保持旧两路行为）；
+    - Neo4j 连接失败等任何初始化异常：返回 None 回退两路，
+      KG 绝不拖垮主检索链路（与 KGRetriever 内部失败回退同一约束）。
+    """
+    if not _settings.KG_ENABLED:
+        return None
+    try:
+        from app.knowledge_graph.kg_retriever import KGRetriever
+        from app.knowledge_graph.graph_store import get_graph_store
+        return KGRetriever(
+            store=get_graph_store(),
+            vector_store=vector_store,
+            similarity_threshold=_settings.KG_CONCEPT_SIMILARITY_THRESHOLD,
+            max_depth=_settings.KG_MULTI_HOP_DEPTH,
+        )
+    except Exception as e:
+        print(f"[get_retriever] KG 初始化失败，回退为 dense+sparse 两路: {e}")
+        return None
+
+
 def get_retriever() -> HybridRetriever:
     """获取混合检索器实例（单例）"""
     global _retriever_instance
@@ -56,7 +79,8 @@ def get_retriever() -> HybridRetriever:
                     sparse_retriever=sparse_retriever,
                     use_reranker=_settings.RERANKER_ENABLED,
                     reranker_model=_settings.RERANKER_MODEL,
-                    top_n=_settings.RERANKER_TOP_N
+                    top_n=_settings.RERANKER_TOP_N,
+                    kg_retriever=_build_kg_retriever(vector_store),
                 )
     return _retriever_instance
 
