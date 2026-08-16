@@ -163,6 +163,11 @@ class DocumentChunk(Base):
     content_hash = Column(String(64), nullable=True, index=True)
     status = Column(String(20), default="active", nullable=False, index=True)
 
+    # ============ 新增：char_start/char_end 偏移（Task 4） ============
+    # 切片在原文中的字符 range，供 KG Article<->chunk overlap 匹配使用
+    char_start = Column(Integer, nullable=True)
+    char_end = Column(Integer, nullable=True)
+
     # 冲突作废元数据
     conflict_with_chunk_id = Column(String(100), nullable=True)
     conflict_detected_at = Column(DateTime(timezone=True), nullable=True)

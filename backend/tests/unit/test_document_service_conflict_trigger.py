@@ -47,7 +47,8 @@ def test_process_document_registers_conflict_detection_when_service_present():
     svc, db, _, document = _make_service_with_mocks(doc_id=42, with_conflict_service=True)
     background_tasks = MagicMock()
 
-    with patch("app.services.document_service.get_parser") as mock_get_parser:
+    with patch("app.services.document_service.get_parser") as mock_get_parser, \
+         patch("app.services.document_service._trigger_kg_extraction"):  # 隔离 KG 触发（另一后台任务）
         mock_get_parser.return_value.parse.return_value = ("fake content", {})
         result = svc.process_document(42, background_tasks)
 
@@ -63,7 +64,8 @@ def test_process_document_skips_conflict_detection_when_no_service():
     svc, _, _, document = _make_service_with_mocks(doc_id=42, with_conflict_service=False)
     background_tasks = MagicMock()
 
-    with patch("app.services.document_service.get_parser") as mock_get_parser:
+    with patch("app.services.document_service.get_parser") as mock_get_parser, \
+         patch("app.services.document_service._trigger_kg_extraction"):  # 隔离 KG 触发（另一后台任务）
         mock_get_parser.return_value.parse.return_value = ("fake content", {})
         result = svc.process_document(42, background_tasks)
 

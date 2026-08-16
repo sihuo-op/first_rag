@@ -128,6 +128,17 @@ class Settings(BaseSettings):
     COLD_KNOWLEDGE_SWEEP_CRON: str = "0 3 * * *"       # 冷知识扫描（每天 3 点）
     HARD_DELETE_SWEEP_CRON: str = "0 4 * * *"          # 硬删除扫描（每天 4 点）
 
+    # Knowledge Graph 配置
+    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_USER: str = "neo4j"
+    NEO4J_PASSWORD: str = "changeme"
+    KG_ENABLED: bool = True
+    KG_CONCEPT_SIMILARITY_THRESHOLD: float = 0.7
+    KG_MULTI_HOP_DEPTH: int = 2
+    KG_EXTRACTION_LLM_MODEL: str = ""
+    KG_EXTRACTION_LLM_TEMPERATURE: float = 0.0
+    KG_EXTRACTION_LLM_MAX_TOKENS: int = 1000
+
     UPLOAD_DIR: str = "./data/uploads"
     SQLITE_DIR: str = "./data/sqlite"
 

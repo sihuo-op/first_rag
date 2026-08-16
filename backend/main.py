@@ -10,6 +10,7 @@ os.environ["TMPDIR"] = str(JIEBA_CACHE_DIR)
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, documents, chat, admin
+from app.knowledge_graph import kg_admin  # KG 审核/后台 API
 from app.db.init_db import init_db
 from app.core.config import get_settings
 from app.entities.schemas import HealthResponse
@@ -48,6 +49,9 @@ app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
 
+if settings.KG_ENABLED:
+    app.include_router(kg_admin.router)
+
 # OTel 初始化（必须在所有 middleware 和 router 注册之后，使 OTel 成为最外层 middleware）
 from app.core.observability import setup_otel, instrument_app
 from app.db.session import engine as db_engine
@@ -65,18 +69,18 @@ async def startup_event():
     print("=" * 50)
 
     # 1. 初始化数据库
-    print("[1/4] Initializing database...")
+    print("[1/5] Initializing database...")
     init_db()
     print("Database initialized")
 
     # 2. 预加载 MilvusStore（包含 embedding 模型）
-    print("[2/4] Preloading MilvusStore...")
+    print("[2/5] Preloading MilvusStore...")
     from app.core.dependencies import get_vector_store
     vector_store = get_vector_store()
     print(f"MilvusStore loaded: embedding_model={vector_store.embedding_model}, dimension={vector_store.dimension}")
 
     # 3. 初始化检索器（异步加载 BM25 索引）
-    print("[3/4] Initializing retriever...")
+    print("[3/5] Initializing retriever...")
     from app.core.dependencies import get_retriever
     retriever = get_retriever()
     print("Retriever initialized")
@@ -93,9 +97,21 @@ async def startup_event():
         print("Reranker model preloaded")
 
     # 4. 启动定时任务调度器
-    print("[4/4] Starting scheduler...")
+    print("[4/5] Starting scheduler...")
     from app.core.scheduler import setup_scheduler
     setup_scheduler()
+
+    # 5. 初始化 Neo4jStore（KG 检索路径）
+    # Neo4j 不可用时降级继续（get_retriever 查询期同样会捕获并降级），
+    # 绝不因 KG 基础设施故障阻止应用启动 —— 与 KG 全局"失败回退"约束一致。
+    if settings.KG_ENABLED:
+        print("[5/5] Initializing Neo4jStore...")
+        from app.knowledge_graph.graph_store import get_graph_store, reset_graph_store
+        try:
+            get_graph_store()
+            print("Neo4jStore initialized")
+        except Exception as exc:  # noqa: BLE001 - KG 可选，失败仅降级
+            print(f"Neo4jStore unavailable, KG disabled for this run: {exc}")
 
     print("=" * 50)
     print("Application startup complete!")
@@ -107,6 +123,11 @@ async def shutdown_event():
     from app.core.scheduler import shutdown_scheduler
     shutdown_scheduler()
     print("Scheduler shut down")
+
+    if settings.KG_ENABLED:
+        from app.knowledge_graph.graph_store import reset_graph_store
+        reset_graph_store()
+        print("Neo4jStore closed")
 
 
 async def _load_bm25_index(retriever):
