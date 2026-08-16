@@ -1,7 +1,6 @@
 from app.knowledge_graph.schema import (
     NodeType, EdgeType, ConflictStatus, ArticleStatus,
-    LawNode, ArticleNode, ConceptNode, PartyNode, RegionNode, DocumentNode,
-    CYPHER_LABELS,
+    ArticleNode, ConceptNode, CYPHER_LABELS,
 )
 
 

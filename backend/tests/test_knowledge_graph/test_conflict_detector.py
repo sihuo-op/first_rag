@@ -7,7 +7,7 @@ mock 约定：
 - LLM 通过 patch ``app.knowledge_graph.conflict_detector.invoke_llm_threadsafe`` mock。
 """
 import json
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from app.knowledge_graph.conflict_detector import ConflictDetector
 from app.knowledge_graph.schema import ConflictStatus

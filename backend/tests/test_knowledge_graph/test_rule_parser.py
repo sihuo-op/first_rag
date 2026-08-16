@@ -1,6 +1,6 @@
 import pytest
 
-from app.knowledge_graph.rule_parser import chinese_to_int, parse_document, ParsedDocument
+from app.knowledge_graph.rule_parser import chinese_to_int, parse_document
 
 
 SAMPLE_TEXT = """中华人民共和国劳动合同法
