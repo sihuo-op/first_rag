@@ -102,11 +102,16 @@ async def startup_event():
     setup_scheduler()
 
     # 5. 初始化 Neo4jStore（KG 检索路径）
+    # Neo4j 不可用时降级继续（get_retriever 查询期同样会捕获并降级），
+    # 绝不因 KG 基础设施故障阻止应用启动 —— 与 KG 全局"失败回退"约束一致。
     if settings.KG_ENABLED:
         print("[5/5] Initializing Neo4jStore...")
         from app.knowledge_graph.graph_store import get_graph_store, reset_graph_store
-        get_graph_store()
-        print("Neo4jStore initialized")
+        try:
+            get_graph_store()
+            print("Neo4jStore initialized")
+        except Exception as exc:  # noqa: BLE001 - KG 可选，失败仅降级
+            print(f"Neo4jStore unavailable, KG disabled for this run: {exc}")
 
     print("=" * 50)
     print("Application startup complete!")

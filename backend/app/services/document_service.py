@@ -265,13 +265,21 @@ class DocumentService:
 # ---------------------------------------------------------------------------
 
 def _load_chunks_for_kg(doc_id: str) -> list[dict]:
-    """加载文档 chunks 供 KG 抽取（独立 db session，后台线程安全）。"""
+    """加载文档 chunks 供 KG 抽取（独立 db session，后台线程安全）。
+
+    id 使用 Milvus 主键（DocumentChunk.milvus_id）而非 PG 自增主键：
+    Article.chunk_ids 最终经 kg_retriever -> get_chunks_by_ids 反查 Milvus，
+    而 Milvus id 是 uuid4 VARCHAR（vector_store.insert_vectors 生成），
+    用 PG int 会查不到任何 chunk，KG 检索路径静默失效。
+    历史文档 milvus_id 为 NULL 时回退 PG id（保持抽取内部匹配一致，
+    反查为空即退化，与既有 legacy 限制一致）。
+    """
     from app.db.session import SessionLocal
     with SessionLocal() as db:
         chunks = db.query(DocumentChunk).filter_by(document_id=int(doc_id)).all()
         return [
             {
-                "id": c.id,
+                "id": c.milvus_id or c.id,
                 "content": c.content,
                 "char_start": c.char_start or 0,
                 "char_end": c.char_end or 0,

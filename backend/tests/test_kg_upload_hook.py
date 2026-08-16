@@ -155,3 +155,49 @@ def test_load_document_text_for_kg_missing_doc_returns_empty():
     with patch("app.db.session.SessionLocal", return_value=fake_session):
         from app.services.document_service import _load_document_text_for_kg
         assert _load_document_text_for_kg("999") == ""
+
+
+def _fake_chunk(id: int, milvus_id=None, char_start=0, char_end=100):
+    c = MagicMock()
+    c.id = id
+    c.milvus_id = milvus_id
+    c.content = "内容"
+    c.char_start = char_start
+    c.char_end = char_end
+    c.document_id = 7
+    return c
+
+
+def test_load_chunks_for_kg_emits_milvus_id():
+    """chunk id 用 Milvus 主键（milvus_id）：Article.chunk_ids 需可反查 Milvus。
+
+    若用 PG 自增 id，get_chunks_by_ids 的 `id in [int]` 对 Milvus uuid VARCHAR
+    主键永远查不到，KG 检索路径会静默返回空 —— 回归保护该契约。
+    """
+    fake_session = MagicMock()
+    fake_session.__enter__.return_value = fake_session
+    fake_session.query.return_value.filter_by.return_value.all.return_value = [
+        _fake_chunk(id=1, milvus_id="uuid-abc-123"),
+        _fake_chunk(id=2, milvus_id="uuid-def-456"),
+    ]
+
+    with patch("app.db.session.SessionLocal", return_value=fake_session):
+        from app.services.document_service import _load_chunks_for_kg
+        chunks = _load_chunks_for_kg("7")
+
+    assert [c["id"] for c in chunks] == ["uuid-abc-123", "uuid-def-456"]
+
+
+def test_load_chunks_for_kg_falls_back_to_pg_id_when_milvus_id_null():
+    """历史文档 milvus_id 为 NULL 时回退 PG 自增 id（保持抽取内部匹配一致）。"""
+    fake_session = MagicMock()
+    fake_session.__enter__.return_value = fake_session
+    fake_session.query.return_value.filter_by.return_value.all.return_value = [
+        _fake_chunk(id=3, milvus_id=None),
+    ]
+
+    with patch("app.db.session.SessionLocal", return_value=fake_session):
+        from app.services.document_service import _load_chunks_for_kg
+        chunks = _load_chunks_for_kg("7")
+
+    assert chunks[0]["id"] == 3
