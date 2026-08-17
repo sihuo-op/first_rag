@@ -195,21 +195,19 @@ class RAGGraph:
                 })
                 if not all_documents:
                     state["errors"].append("检索失败：未获取到任何文档")
+                    # 首轮即空说明语料无支持：本路径不会改写查询，重试同一查询结果确定相同，
+                    # 纯浪费一次完整检索周期，直接跳出用当前（空）结果收尾
                     state["execution_log"].append({
                         "step": "retrieve",
                         "attempt": state["attempt_count"],
                         "query": current_query,
                         "documents_found": 0,
                         "time_s": round(total_retrieve_time, 3),
-                        "reason": "检索未获取到任何文档，保留上一轮有效检索结果"
+                        "reason": "检索未获取到任何文档，语料无支持，跳过无效重试"
                     })
-                    if state["documents"]:
-                        iteration_timing["total_time"] = round(time.time() - iteration_start, 3)
-                        state["step_timings"].append(iteration_timing)
-                        break
                     iteration_timing["total_time"] = round(time.time() - iteration_start, 3)
                     state["step_timings"].append(iteration_timing)
-                    continue
+                    break
 
                 # Step 2: 评估检索结果（CRAG 风格）
                 eval_start = time.time()

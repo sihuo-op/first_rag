@@ -96,6 +96,9 @@ async def startup_event():
         reranker._load_model()
         print("Reranker model preloaded")
 
+    # 首次推理预热（后台）：模型加载 ≠ 推理就绪，torch/ONNX 首次前向另有秒级开销
+    asyncio.create_task(_warmup_inference())
+
     # 4. 启动定时任务调度器
     print("[4/5] Starting scheduler...")
     from app.core.scheduler import setup_scheduler
@@ -128,6 +131,42 @@ async def shutdown_event():
         from app.knowledge_graph.graph_store import reset_graph_store
         reset_graph_store()
         print("Neo4jStore closed")
+
+
+async def _warmup_inference():
+    """后台预热首次推理路径，消除首请求 ~4s 的隐性 warm-up 延迟。
+
+    覆盖四类一次性开销：jieba 词典初始化、embedding 首次前向、
+    reranker ONNX 首次前向（arena 分配）、LLM HTTPS 连接建立。
+    任何一步失败都不影响应用功能。
+    """
+    def _run() -> None:
+        try:
+            import time as _time
+            t0 = _time.time()
+
+            import jieba
+            jieba.initialize()
+
+            from app.core.dependencies import get_vector_store, get_retriever
+            get_vector_store().embed_query("劳动合同 试用期 预热")
+
+            retriever = get_retriever()
+            if getattr(retriever, "reranker", None):
+                retriever.reranker.rerank("预热", [{"content": "劳动合同的试用期规定"}], 1)
+
+            from app.llm.providers import get_rewrite_llm
+            from langchain_core.messages import HumanMessage
+            get_rewrite_llm().invoke([HumanMessage(content="ping")])
+
+            print(f"Inference warmup done in {round(_time.time() - t0, 1)}s")
+        except Exception as e:
+            print(f"Inference warmup skipped (non-fatal): {e}")
+
+    try:
+        await asyncio.to_thread(_run)
+    except Exception as e:
+        print(f"Inference warmup failed (non-fatal): {e}")
 
 
 async def _load_bm25_index(retriever):

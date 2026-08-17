@@ -82,45 +82,48 @@ def get_provider(config: LLMConfig) -> BaseLLMProvider:
 
 
 def get_generation_llm() -> BaseChatModel:
-    """获取生成用 LLM（中等温度）"""
+    """获取生成用 LLM（中等温度）。关闭思考模式：推理 token 会显著拉长首答延迟。"""
     from app.core.config import get_settings
+    from langchain_openai import ChatOpenAI
     _settings = get_settings()
-    model_name = _settings.GENERATION_LLM_MODEL or _settings.CHAT_MODEL
-    config = LLMConfig(
-        provider=LLMProviderType.OPENAI,
-        model_name=model_name,
+    return ChatOpenAI(
+        model=_settings.GENERATION_LLM_MODEL or _settings.CHAT_MODEL,
+        openai_api_key=_settings.CHAT_API_KEY,
+        openai_api_base=_settings.CHAT_API_BASE,
         temperature=_settings.GENERATION_LLM_TEMPERATURE,
         max_tokens=_settings.GENERATION_LLM_MAX_TOKENS,
+        extra_body={"enable_thinking": False},
     )
-    return OpenAIProvider(config).get_llm()
 
 
 def get_rewrite_llm() -> BaseChatModel:
-    """获取改写用 LLM（低温度）"""
+    """获取改写用 LLM（低温度，关思考）。"""
     from app.core.config import get_settings
+    from langchain_openai import ChatOpenAI
     _settings = get_settings()
-    model_name = _settings.REWRITE_LLM_MODEL or _settings.CHAT_MODEL
-    config = LLMConfig(
-        provider=LLMProviderType.OPENAI,
-        model_name=model_name,
+    return ChatOpenAI(
+        model=_settings.REWRITE_LLM_MODEL or _settings.CHAT_MODEL,
+        openai_api_key=_settings.CHAT_API_KEY,
+        openai_api_base=_settings.CHAT_API_BASE,
         temperature=_settings.REWRITE_LLM_TEMPERATURE,
         max_tokens=_settings.REWRITE_LLM_MAX_TOKENS,
+        extra_body={"enable_thinking": False},
     )
-    return OpenAIProvider(config).get_llm()
 
 
 def get_evaluation_llm() -> BaseChatModel:
-    """获取评估用 LLM（低温、短输出）。"""
+    """获取评估用 LLM（低温、短输出、关思考）。"""
     from app.core.config import get_settings
+    from langchain_openai import ChatOpenAI
     _settings = get_settings()
-    model_name = _settings.EVALUATION_LLM_MODEL or _settings.GENERATION_LLM_MODEL or _settings.CHAT_MODEL
-    config = LLMConfig(
-        provider=LLMProviderType.OPENAI,
-        model_name=model_name,
+    return ChatOpenAI(
+        model=_settings.EVALUATION_LLM_MODEL or _settings.GENERATION_LLM_MODEL or _settings.CHAT_MODEL,
+        openai_api_key=_settings.CHAT_API_KEY,
+        openai_api_base=_settings.CHAT_API_BASE,
         temperature=_settings.EVALUATION_LLM_TEMPERATURE,
         max_tokens=_settings.EVALUATION_LLM_MAX_TOKENS,
+        extra_body={"enable_thinking": False},
     )
-    return OpenAIProvider(config).get_llm()
 
 
 def get_extraction_llm() -> BaseChatModel:
@@ -136,4 +139,5 @@ def get_extraction_llm() -> BaseChatModel:
         temperature=s.KG_EXTRACTION_LLM_TEMPERATURE,
         max_tokens=s.KG_EXTRACTION_LLM_MAX_TOKENS,
         request_timeout=60,
+        extra_body={"enable_thinking": False},  # 推理模型会把 token 预算耗在思考上，JSON 抽取应关闭
     )

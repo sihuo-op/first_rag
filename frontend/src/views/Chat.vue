@@ -44,12 +44,32 @@
                 <el-icon v-else><ChatDotRound /></el-icon>
               </div>
               <div class="message-content">
-                <div class="message-bubble" v-html="formatMessage(msg.content || msg.streaming_status || '')"></div>
+                <div class="message-bubble" v-html="formatMessage(msg.content || (getThinkingText(msg) ? '' : msg.streaming_status) || '')"></div>
+                <div v-if="msg.role === 'assistant' && getThinkingText(msg)" class="thinking-block">
+                  <details :open="!!msg.is_streaming">
+                    <summary>🤔 思考过程 <span class="thinking-count">{{ getThinkingText(msg).length }}字</span></summary>
+                    <div class="thinking-content">{{ getThinkingText(msg) }}</div>
+                  </details>
+                </div>
                 <div v-if="msg.streaming_status && msg.role === 'assistant'" class="streaming-status">
                   {{ msg.streaming_status }}
                 </div>
                 <div v-if="msg.process_time && msg.role === 'assistant'" class="process-time">
                   耗时: {{ formatProcessTime(msg.process_time) }}
+                </div>
+                <div v-if="canShowFeedback(msg)" class="feedback-bar">
+                  <button
+                    class="feedback-btn"
+                    :class="{ active: msg.feedback_polarity === 'up' }"
+                    @click="handleFeedback(msg, 'up')"
+                    title="回答有用"
+                  >👍</button>
+                  <button
+                    class="feedback-btn"
+                    :class="{ active: msg.feedback_polarity === 'down' }"
+                    @click="handleFeedback(msg, 'down')"
+                    title="回答有问题"
+                  >👎</button>
                 </div>
                 <div v-if="msg.debug_info && msg.role === 'assistant'" class="debug-info">
                   <el-collapse>
@@ -381,6 +401,24 @@ function formatProcessTime(ms) {
   return seconds.toFixed(2) + 's'
 }
 
+function getThinkingText(msg) {
+  return msg?.reasoning || msg?.debug_info?.reasoning || ''
+}
+
+function canShowFeedback(msg) {
+  return msg.role === 'assistant'
+    && !msg.is_streaming
+    && typeof msg.id === 'number'
+}
+
+async function handleFeedback(msg, polarity) {
+  if (msg.feedback_polarity === polarity) return
+  const result = await chatStore.sendFeedback(msg.id, polarity)
+  if (!result.ok) {
+    ElMessage.error(result.error || '反馈提交失败')
+  }
+}
+
 // 判断是否为 Agentic 模式消息
 function isAgenticMessage(msg) {
   const info = getAgenticInfo(msg)
@@ -626,11 +664,89 @@ function getStepIcon(stepType) {
   color: #409eff;
 }
 
+.thinking-block {
+  margin-top: 8px;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  background: #fafafa;
+  overflow: hidden;
+}
+
+.thinking-block summary {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #606266;
+  user-select: none;
+  list-style: none;
+}
+
+.thinking-block summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-block summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 0.15s;
+  color: #909399;
+}
+
+.thinking-block details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.thinking-block .thinking-count {
+  color: #c0c4cc;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.thinking-block .thinking-content {
+  padding: 4px 12px 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #909399;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+  border-top: 1px dashed #e4e7ed;
+}
+
 .process-time {
   margin-top: 8px;
   font-size: 12px;
   color: #909399;
   text-align: right;
+}
+
+.feedback-bar {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.feedback-btn {
+  background: none;
+  border: 1px solid #e6e6e6;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: all 0.15s;
+}
+
+.feedback-btn:hover {
+  background-color: #f5f7fa;
+  border-color: #d9d9d9;
+}
+
+.feedback-btn.active {
+  background-color: #ecf5ff;
+  border-color: #409eff;
 }
 
 .debug-info {

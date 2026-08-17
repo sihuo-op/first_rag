@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     GENERATION_LLM_MODEL: str = ""                 # 生成用 LLM 模型名称（默认使用 CHAT_MODEL）
     GENERATION_LLM_TEMPERATURE: float = 0.1       # 生成用 LLM 温度（较低值确保输出稳定）
     GENERATION_LLM_MAX_TOKENS: int = 2000          # 生成用 LLM 最大 token 数
+    GENERATION_LLM_ENABLE_THINKING: bool = False   # 生成时是否开启思考模式（reasoning_content 会先于 content 流式返回）
+    GENERATION_LLM_THINKING_MAX_TOKENS: int = 6000 # 开启思考后额外追加的输出 token 预算（思考 token 计入 max_tokens）
     REWRITE_LLM_MODEL: str = ""                   # 改写用 LLM 模型名称（默认使用 CHAT_MODEL）
     REWRITE_LLM_TEMPERATURE: float = 0.3          # 改写用 LLM 温度
     REWRITE_LLM_MAX_TOKENS: int = 500             # 改写用 LLM 最大 token 数
@@ -84,6 +86,8 @@ class Settings(BaseSettings):
     RERANKER_ENABLED: bool                         # 是否启用重排序
     RERANKER_MODEL: str                            # CrossEncoder 模型名称
     RERANKER_TOP_N: int                            # 重排序后保留数量
+    RERANK_MAX_CANDIDATES: int = 10                # 进入重排序的最大候选数（ONNX CPU 耗时随候选数线性增长）
+    RERANKER_MAX_LENGTH: int = 256                 # 重排序时每条 pair 的最大 token 长度（CPU 耗时随序列长度增长，512→256 约省一半）
 
     HYBRID_SEARCH_ENABLED: bool = True
     DENSE_WEIGHT: float = 0.7

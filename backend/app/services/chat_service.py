@@ -390,6 +390,7 @@ class ChatService:
 
         return {
             "answer": answer,
+            "message_id": assistant_message.id,
             "conversation_id": conv_id,
             "retrieved_chunks": retrieved_chunks,  # 返回检索到的文档片段
             "process_time": process_time,
@@ -566,23 +567,34 @@ class ChatService:
         self._schedule_stats_update(background_tasks, documents)
 
         full_answer = ""
+        full_reasoning = ""
         generation_time = 0
         if documents:
             yield self._sse_event({"type": "status", "stage": "answer", "message": "正在流式生成答案..."})
             answer_parts = []
+            reasoning_parts = []
             generate_start = time.time()
             try:
-                async for token in self._call_llm_stream(messages):
-                    answer_parts.append(token)
-                    yield self._sse_event({'type': 'content', 'content': token})
+                async for item in self._call_llm_stream(messages):
+                    if item["kind"] == "reasoning":
+                        reasoning_parts.append(item["text"])
+                        yield self._sse_event({'type': 'reasoning', 'content': item["text"]})
+                    else:
+                        answer_parts.append(item["text"])
+                        yield self._sse_event({'type': 'content', 'content': item["text"]})
                 full_answer = "".join(answer_parts).strip()
+                full_reasoning = "".join(reasoning_parts)
                 generation_time = round(time.time() - generate_start, 3)
             except Exception as e:
                 print(f"LLM stream generation error: {e}")
-                full_answer = "抱歉，生成答案时出现了错误。"
+                # 保留已流出的内容，避免整段回答被错误文案覆盖
+                streamed = "".join(answer_parts).strip()
+                full_answer = streamed if streamed else "抱歉，生成答案时出现了错误。"
+                full_reasoning = "".join(reasoning_parts)
                 generation_time = round(time.time() - generate_start, 3)
                 yield self._sse_event({"type": "error", "message": str(e)})
-                yield self._sse_event({'type': 'content', 'content': full_answer})
+                if not streamed:
+                    yield self._sse_event({'type': 'content', 'content': full_answer})
         else:
             full_answer = "未找到可用于回答的相关资料。"
             yield self._sse_event({'type': 'content', 'content': full_answer})
@@ -615,6 +627,7 @@ class ChatService:
 
         debug_info = {
             "mode": mode,
+            "reasoning": full_reasoning,
             "original_query": query,
             "rewritten_query": standalone_query if standalone_query != query else (query_history[-1] if len(query_history) > 1 else None),
             "retrieval_steps": retrieval_steps,
@@ -653,6 +666,7 @@ class ChatService:
 
         yield self._sse_event({
             'type': 'done',
+            'message_id': assistant_message.id,
             'conversation_id': conv_id,
             'process_time': process_time,
             'step_timings': step_timings,
@@ -821,16 +835,21 @@ class ChatService:
             "Content-Type": "application/json"
         }
         data = {
-            "model": settings.CHAT_MODEL,
+            "model": settings.GENERATION_LLM_MODEL or settings.CHAT_MODEL,
             "messages": messages,
-            "temperature": 0.3  # 较低温度使输出更稳定，减少检索结果波动
+            "temperature": settings.GENERATION_LLM_TEMPERATURE,
+            "max_tokens": settings.GENERATION_LLM_MAX_TOKENS,
+            "enable_thinking": settings.GENERATION_LLM_ENABLE_THINKING,
         }
 
         try:
             response = await self._async_client.post(url, headers=headers, json=data)
             response.raise_for_status()
             result = response.json()
-            return result["choices"][0]["message"]["content"]
+            choices = result.get("choices") or []
+            if not choices:
+                return ""
+            return choices[0].get("message", {}).get("content", "")
         except httpx.ConnectError as e:
             print(f"LLM API connection error: {e}")
             raise
@@ -854,15 +873,18 @@ class ChatService:
     async def _call_llm_stream(
         self,
         messages: List[Dict[str, str]]
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[Dict[str, str], None]:
         """
         调用 LLM API 并流式返回（OpenAI 兼容接口）
+
+        思考模式开启时，推理 token 会以 reasoning_content 先于 content 到达，
+        二者都实时上抛，前端可将思考过程显示为滚动文字。
 
         Args:
             messages: 消息列表
 
         Yields:
-            LLM 回答的文本块
+            {"kind": "reasoning"|"content", "text": str}
 
         Raises:
             ValueError: 未配置 API Key
@@ -870,7 +892,7 @@ class ChatService:
         if not settings.CHAT_API_KEY:
             full_response = self._mock_response(messages)
             for char in full_response:
-                yield char
+                yield {"kind": "content", "text": char}
             return
 
         url = f"{settings.CHAT_API_BASE}/chat/completions"
@@ -878,11 +900,15 @@ class ChatService:
             "Authorization": f"Bearer {settings.CHAT_API_KEY}",
             "Content-Type": "application/json"
         }
+        thinking = settings.GENERATION_LLM_ENABLE_THINKING
         data = {
-            "model": settings.CHAT_MODEL,
+            "model": settings.GENERATION_LLM_MODEL or settings.CHAT_MODEL,
             "messages": messages,
-            "temperature": 0.3,
-            "stream": True
+            "temperature": settings.GENERATION_LLM_TEMPERATURE,
+            # 思考 token 计入 max_tokens 预算，开启思考时额外追加预算避免回答被截断
+            "max_tokens": settings.GENERATION_LLM_MAX_TOKENS + (settings.GENERATION_LLM_THINKING_MAX_TOKENS if thinking else 0),
+            "stream": True,
+            "enable_thinking": thinking,
         }
 
         try:
@@ -896,9 +922,16 @@ class ChatService:
                         import json
                         try:
                             chunk = json.loads(data_str)
-                            content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            choices = chunk.get("choices") or []
+                            if not choices:  # 结尾 usage-only 块 choices 为空，跳过
+                                continue
+                            delta = choices[0].get("delta", {}) or {}
+                            reasoning = delta.get("reasoning_content") or ""
+                            if reasoning:
+                                yield {"kind": "reasoning", "text": reasoning}
+                            content = delta.get("content") or ""
                             if content:
-                                yield content
+                                yield {"kind": "content", "text": content}
                         except json.JSONDecodeError:
                             continue
         except httpx.ConnectError as e:

@@ -80,6 +80,8 @@ def get_retriever() -> HybridRetriever:
                     use_reranker=_settings.RERANKER_ENABLED,
                     reranker_model=_settings.RERANKER_MODEL,
                     top_n=_settings.RERANKER_TOP_N,
+                    rerank_max_candidates=_settings.RERANK_MAX_CANDIDATES,
+                    rerank_max_length=_settings.RERANKER_MAX_LENGTH,
                     kg_retriever=_build_kg_retriever(vector_store),
                 )
     return _retriever_instance

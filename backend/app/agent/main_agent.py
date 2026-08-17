@@ -418,9 +418,11 @@ class MainAgent:
         print(f"{'='*60}\n")
 
     def _should_decompose_question(self, question: str) -> bool:
+        # 只保留强多任务信号："和/及/、"等连词在单任务复合问（如"工资、加班费怎么算"）中
+        # 同样高频，误触发会白付一次 LLM decompose 调用（~0.8s）+ 多路检索
         multi_task_markers = [
-            "，并且", "并且", "同时", "另外", "还有", "以及", "分别", "一方面", "另一方面",
-            "第一", "第二", "1.", "2.", "；", ";", "、", "和", "及"
+            "并且", "同时", "另外", "还有", "以及", "分别", "一方面", "另一方面",
+            "第一", "第二", "1.", "2.", "；", ";"
         ]
         question_mark_count = question.count("？") + question.count("?")
         return question_mark_count > 1 or any(marker in question for marker in multi_task_markers)

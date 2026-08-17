@@ -101,8 +101,9 @@ class Reranker:
     输出仍是 raw logits（与原 CrossEncoder.predict() 默认行为一致），不破坏 steps.py 的阈值标定。
     """
 
-    def __init__(self, model_name: str = "BAAI/bge-reranker-base"):
+    def __init__(self, model_name: str = "BAAI/bge-reranker-base", max_length: int = 256):
         self.model_name = model_name
+        self.max_length = max_length
         self._model = None
         self._tokenizer = None
         self._lock = threading.Lock()
@@ -175,7 +176,7 @@ class Reranker:
         pairs = [(query, doc.get("content", "")) for doc in documents]
         with _loaded_models_lock:
             inputs = self._tokenizer(
-                pairs, padding=True, truncation=True, max_length=512, return_tensors="pt"
+                pairs, padding=True, truncation=True, max_length=self.max_length, return_tensors="pt"
             )
             with torch.no_grad():
                 outputs = self._model(**inputs)
@@ -200,6 +201,8 @@ class HybridRetriever(BaseRetriever):
         use_reranker: bool = True,
         reranker_model: str = "BAAI/bge-reranker-base",
         top_n: int = 5,
+        rerank_max_candidates: int = 10,
+        rerank_max_length: int = 256,
         kg_retriever=None,  # KGRetriever 实例或 None（None 时为旧两路行为）
     ):
         self.vector_store = vector_store
@@ -207,10 +210,12 @@ class HybridRetriever(BaseRetriever):
         self.rrf_k = rrf_k  # RRF 参数
         self.use_reranker = use_reranker
         self.top_n = top_n
+        self.rerank_max_candidates = rerank_max_candidates
+        self.rerank_max_length = rerank_max_length
         self.kg_retriever = kg_retriever
 
         if use_reranker:
-            self.reranker = Reranker(model_name=reranker_model)
+            self.reranker = Reranker(model_name=reranker_model, max_length=rerank_max_length)
         else:
             self.reranker = None
 
@@ -346,6 +351,10 @@ class HybridRetriever(BaseRetriever):
         if self.use_reranker and self.reranker and len(unique_results) > 0:
             with tracer.start_as_current_span("rag.retrieve.rerank") as span:
                 rerank_start = time.time()
+                # ONNX CPU 推理耗时随候选数线性增长，KG 三路融合后候选可达 17+，
+                # 只送 rrf_score 前 N 个进 reranker（结果已按 rrf_score 降序，直接切片）
+                if self.rerank_max_candidates and len(unique_results) > self.rerank_max_candidates:
+                    unique_results = unique_results[:self.rerank_max_candidates]
                 reranked_results = self.reranker.rerank(query, unique_results.copy(), self.top_n)
                 rerank_time = time.time() - rerank_start
                 span.set_attribute("retrieve.rerank_count", len(reranked_results))

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { getConversations, createConversation, deleteConversation, getMessages, chat, streamChat } from '@/api/chat'
+import { getConversations, createConversation, deleteConversation, getMessages, chat, streamChat, sendFeedback } from '@/api/chat'
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
@@ -85,6 +85,13 @@ export const useChatStore = defineStore('chat', {
           onStatus: (event) => {
             updateAssistant({ streaming_status: event.message })
           },
+          onReasoning: (event) => {
+            const current = this.messages.find(m => m.id === assistantTempId)
+            updateAssistant({
+              reasoning: `${current?.reasoning || ''}${event.content || ''}`,
+              streaming_status: '正在思考...'
+            })
+          },
           onContent: (event) => {
             const current = this.messages.find(m => m.id === assistantTempId)
             updateAssistant({
@@ -98,6 +105,7 @@ export const useChatStore = defineStore('chat', {
           onDone: (event) => {
             finalResponse = event
             updateAssistant({
+              id: event.message_id,
               is_streaming: false,
               streaming_status: '',
               process_time: event.process_time,
@@ -133,6 +141,23 @@ export const useChatStore = defineStore('chat', {
       this.currentConversationId = null
       this.messages = []
       localStorage.removeItem('lastConversationId')
+    },
+
+    async sendFeedback(messageId, polarity) {
+      const idx = this.messages.findIndex(m => m.id === messageId)
+      const prev = idx >= 0 ? this.messages[idx].feedback_polarity : null
+      if (idx >= 0) {
+        this.messages[idx].feedback_polarity = polarity
+      }
+      try {
+        await sendFeedback({ message_id: messageId, polarity })
+        return { ok: true }
+      } catch (e) {
+        if (idx >= 0) {
+          this.messages[idx].feedback_polarity = prev
+        }
+        return { ok: false, error: e.message || '反馈提交失败' }
+      }
     }
   }
 })

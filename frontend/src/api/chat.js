@@ -29,6 +29,10 @@ export function chat(data) {
   return request.post('/v1/chat', data)
 }
 
+export function sendFeedback(data) {
+  return request.post('/v1/feedback', data)
+}
+
 export async function streamChat(data, handlers = {}) {
   const response = await fetch('/api/v1/chat', {
     method: 'POST',
@@ -66,6 +70,7 @@ export async function streamChat(data, handlers = {}) {
 
     const event = JSON.parse(payloadText)
     if (event.type === 'status') handlers.onStatus?.(event)
+    else if (event.type === 'reasoning') handlers.onReasoning?.(event)
     else if (event.type === 'content') handlers.onContent?.(event)
     else if (event.type === 'done') handlers.onDone?.(event)
     else if (event.type === 'error') handlers.onError?.(event)
