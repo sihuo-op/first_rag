@@ -5,7 +5,7 @@ API 请求/响应模型定义 (Pydantic Schemas)
 """
 
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
 
@@ -391,10 +391,29 @@ class ChatResponse(BaseModel):
     """
     answer: str
     conversation_id: int
+    message_id: Optional[int] = None                   # assistant 消息的 DB id（用于点踩接口）
     retrieved_chunks: Optional[List[Dict[str, Any]]] = None
     process_time: Optional[float] = None              # 处理耗时（秒）
     debug_info: Optional[DebugInfo] = None            # 传统 RAG 调试信息
     agentic_info: Optional[AgenticDebugInfo] = None   # Agentic RAG 调试信息
+
+
+class FeedbackCreate(BaseModel):
+    """点赞/点踩请求。"""
+    message_id: int
+    polarity: Literal["up", "down"]
+
+
+class FeedbackResponse(BaseModel):
+    """点赞/点踩响应。"""
+    id: int
+    message_id: int
+    user_id: int
+    polarity: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class RetrieveRequest(BaseModel):

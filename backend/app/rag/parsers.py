@@ -102,8 +102,11 @@ PARSERS = {
 
 
 def get_parser(file_extension: str) -> DocumentParser:
-    """根据文件扩展名获取解析器"""
-    parser_class = PARSERS.get(file_extension.lower())
+    """根据文件扩展名获取解析器（容忍缺省前导点）。"""
+    ext = file_extension.lower()
+    if ext and not ext.startswith("."):
+        ext = f".{ext}"
+    parser_class = PARSERS.get(ext)
     if parser_class:
         return parser_class()
     raise ValueError(f"Unsupported file type: {file_extension}")

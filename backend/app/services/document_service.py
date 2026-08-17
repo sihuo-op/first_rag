@@ -87,6 +87,13 @@ class DocumentService:
             query = query.filter(Document.user_id == user_id)
         return query.order_by(Document.created_at.desc()).offset(skip).limit(limit).all()
 
+    def get_document_by_id(self, doc_id: int, user_id: Optional[int] = None) -> Optional[Document]:
+        """获取单个文档（不做状态过滤，status 端点需能看到 pending/failed）。"""
+        query = self.db.query(Document).filter(Document.id == doc_id)
+        if user_id is not None:
+            query = query.filter(Document.user_id == user_id)
+        return query.first()
+
     async def upload_document(
         self,
         file: UploadFile,
@@ -107,10 +114,10 @@ class DocumentService:
             创建的文档记录
         """
         file_ext = os.path.splitext(file.filename)[1].lower()
-        if file_ext not in settings.allowed_extensions:
+        if file_ext.lstrip(".") not in settings.allowed_extensions_list:
             raise ValueError(f"不支持的文件类型: {file_ext}")
 
-        file_path = os.path.join(settings.upload_dir, f"{uuid.uuid4()}{file_ext}")
+        file_path = os.path.join(settings.UPLOAD_DIR, f"{uuid.uuid4()}{file_ext}")
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
         with open(file_path, "wb") as f:

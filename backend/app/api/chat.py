@@ -5,9 +5,10 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.entities.schemas import (
     ConversationResponse, ConversationCreate, ConversationUpdate,
-    ChatMessageResponse, ChatRequest, ChatResponse, ChatMode
+    ChatMessageResponse, ChatRequest, ChatResponse, ChatMode,
+    FeedbackCreate, FeedbackResponse
 )
-from app.entities.database import User
+from app.entities.database import User, MessageFeedback
 from app.core.security import get_current_active_user
 from app.services.chat_service import ChatService
 from app.core.dependencies import get_retriever
@@ -137,3 +138,29 @@ async def chat(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e)
         )
+
+
+@router.post("/feedback", response_model=FeedbackResponse)
+async def submit_feedback(
+    data: FeedbackCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """点赞/点踩接口 - 同一 user 对同一 message 的反馈会被覆盖（upsert）。"""
+    existing = db.query(MessageFeedback).filter_by(
+        message_id=data.message_id, user_id=current_user.id
+    ).first()
+    if existing:
+        existing.polarity = data.polarity
+        db.commit()
+        db.refresh(existing)
+        return existing
+    fb = MessageFeedback(
+        message_id=data.message_id,
+        user_id=current_user.id,
+        polarity=data.polarity
+    )
+    db.add(fb)
+    db.commit()
+    db.refresh(fb)
+    return fb

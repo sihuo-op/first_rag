@@ -6,7 +6,7 @@
 
 from sqlalchemy import (
     Column, Integer, String, Text, BigInteger, Boolean, DateTime,
-    ForeignKey, JSON, Enum as SQLEnum, func, Float
+    ForeignKey, JSON, Enum as SQLEnum, func, Float, UniqueConstraint
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -243,6 +243,25 @@ class ChatMessage(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     conversation = relationship("Conversation", back_populates="messages")
+
+
+class MessageFeedback(Base):
+    """用户对 assistant 消息的点赞/点踩。
+
+    同一 user 对同一 message 只保留最后一次反馈（upsert by (message_id, user_id)）。
+    review 时 JOIN chat_messages 取 debug_info 做交叉验证。
+    """
+    __tablename__ = "message_feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey("chat_messages.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    polarity = Column(String(10), nullable=False)  # 'up' or 'down'
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", name="uq_message_user"),
+    )
 
 
 class ConversationSummary(Base):

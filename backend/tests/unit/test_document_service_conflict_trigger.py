@@ -134,8 +134,8 @@ def test_upload_document_schedules_process_document_with_background_tasks():
          patch("os.makedirs"), \
          patch("builtins.open"), \
          patch("app.services.document_service.Document") as mock_doc_cls:
-        mocked_settings.allowed_extensions = [".md"]
-        mocked_settings.upload_dir = "/tmp/uploads"
+        mocked_settings.allowed_extensions_list = ["md"]
+        mocked_settings.UPLOAD_DIR = "/tmp/uploads"
         mock_doc_cls.return_value = document
 
         import asyncio
@@ -163,8 +163,8 @@ def test_upload_document_runs_synchronously_without_background_tasks():
          patch("builtins.open"), \
          patch("app.services.document_service.Document") as mock_doc_cls, \
          patch.object(svc, "process_document") as mock_process:
-        mocked_settings.allowed_extensions = [".md"]
-        mocked_settings.upload_dir = "/tmp/uploads"
+        mocked_settings.allowed_extensions_list = ["md"]
+        mocked_settings.UPLOAD_DIR = "/tmp/uploads"
         mock_doc_cls.return_value = document
 
         import asyncio
