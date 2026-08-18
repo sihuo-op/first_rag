@@ -46,7 +46,7 @@ jobs:
       - name: Run unit tests with coverage
         working-directory: backend
         run: >
-          pytest tests/unit tests/test_char_offset_schema.py tests/test_splitter_offset.py
+          python -m pytest tests/unit tests/test_char_offset_schema.py tests/test_splitter_offset.py
           tests/test_hybrid_retriever_kg.py tests/test_kg_upload_hook.py
           --cov=app --cov-report=xml:coverage.xml --cov-report=term -q
       - name: Upload coverage artifact
@@ -81,7 +81,7 @@ jobs:
           pip install pytest neo4j tenacity testcontainers-neo4j
       - name: Run KG integration tests (testcontainers Neo4j)
         working-directory: backend
-        run: pytest tests/test_knowledge_graph --ignore=tests/test_knowledge_graph/test_e2e.py -q
+        run: python -m pytest tests/test_knowledge_graph --ignore=tests/test_knowledge_graph/test_e2e.py -q
 
   frontend-build:
     runs-on: ubuntu-latest
