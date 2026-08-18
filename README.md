@@ -1,6 +1,10 @@
 # Agentic RAG
 
+[![CI](https://github.com/sihuo-op/first_rag/actions/workflows/ci.yml/badge.svg)](https://github.com/sihuo-op/first_rag/actions/workflows/ci.yml)
+
 一个面向劳动法问答的 Agentic RAG 项目。系统支持多任务意图拆分、并行 RAG 工具调用、混合检索、调试信息展示，以及基于“滚动摘要 + 未压缩历史 + 长期用户记忆”的复杂会话记忆。
+
+> 深入阅读：[架构设计与关键决策](./docs/ARCHITECTURE.md) · [量化评估报告](./docs/EVALUATION_REPORT.md)
 
 ## 核心能力
 
@@ -160,6 +164,21 @@ target: 'http://127.0.0.1:8000'
 ```
 
 不要改回 `localhost`，在部分 Windows 环境下可能导致 Vite 代理登录接口返回 500。
+
+### 5. 一键导入演示语料
+
+```bash
+D:/tln/code/first_rag/.venv/Scripts/python.exe D:/tln/code/first_rag/backend/scripts/demo_setup.py
+```
+
+脚本会自动等待后端就绪、登录、上传内置的劳动法语料（`backend/scripts/demo_corpus/`）、等待处理完成，并打印可直接试问的示例问题。
+
+## 开发与质量
+
+- **CI**：GitHub Actions（lint + 后端单测含覆盖率 + KG 集成测试（testcontainers Neo4j）+ 前端构建），见 [ci.yml](.github/workflows/ci.yml)。
+- **Lint**：`ruff check backend/app backend/main.py`（配置在根 `pyproject.toml`）。
+- **Pre-commit**：`pre-commit install` 后自动执行 ruff 与空白符检查（配置见 [.pre-commit-config.yaml](.pre-commit-config.yaml)）。
+- **测试**：`pytest tests/unit`（无外部依赖）；`pytest tests/test_knowledge_graph --ignore=tests/test_knowledge_graph/test_e2e.py`（需本机 Docker）。
 
 ## 登录接口验证
 
