@@ -1,15 +1,17 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
-from app.db.session import get_db
-from app.entities.schemas import DocumentResponse, DocumentUpdate
-from app.entities.database import User
+
+from app.core.dependencies import get_conflict_service, get_retriever, get_vector_store
 from app.core.security import get_current_active_user
-from app.services.document_service import DocumentService
-from app.services.conflict_service import ConflictService
-from app.core.dependencies import get_vector_store, get_retriever, get_conflict_service
-from app.rag.vector_store import MilvusStore
+from app.db.session import get_db
+from app.entities.database import User
+from app.entities.schemas import DocumentResponse, DocumentUpdate
 from app.rag.retriever import HybridRetriever
+from app.rag.vector_store import MilvusStore
+from app.services.conflict_service import ConflictService
+from app.services.document_service import DocumentService
 
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 

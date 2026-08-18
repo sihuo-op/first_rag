@@ -1,8 +1,10 @@
-from typing import Optional, List
+from typing import List, Optional
+
 from sqlalchemy.orm import Session
+
+from app.core.security import get_password_hash, verify_password
 from app.entities.database import User, UserRole
 from app.entities.schemas import UserCreate, UserUpdate
-from app.core.security import get_password_hash, verify_password
 
 
 class UserService:

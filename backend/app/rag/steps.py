@@ -105,7 +105,7 @@ class RetrieveTool(BaseTool):
                 debug_info=debug_info  # 保存详细调试信息
             )
         except Exception as e:
-            return ToolResult(success=False, data=None, message=f"检索失败: {str(e)}")
+            return ToolResult(success=False, data=None, message=f"检索失败: {e!s}")
 
 
 # ============ 改写工具 ============
@@ -155,7 +155,7 @@ class RewriteTool(BaseTool):
                 message=f"改写类型: {rewrite_type}, 生成 {len(queries)} 个查询",
             )
         except Exception as e:
-            return ToolResult(success=False, data=None, message=f"改写失败: {str(e)}")
+            return ToolResult(success=False, data=None, message=f"改写失败: {e!s}")
 
     def _select_rewrite_by_grade(self, grade: str, query: str) -> str:
         """根据 CRAG 评估等级选择改写策略
@@ -259,7 +259,7 @@ class GenerateTool(BaseTool):
                 debug_info={"prompt": prompt, "answer": answer}
             )
         except Exception as e:
-            return ToolResult(success=False, data=None, message=f"生成失败: {str(e)}")
+            return ToolResult(success=False, data=None, message=f"生成失败: {e!s}")
 
     def _generate_answer(self, question: str, documents: List) -> str:
         sorted_docs = sorted(documents, key=lambda x: x.get("score", 0), reverse=True)
@@ -498,10 +498,7 @@ class EvaluateTool(BaseTool):
             top1_score = max(top1_score, s)
 
         has_rerank = any(d.get("rerank_score") is not None and d.get("rerank_score", 0) != 0 for d in documents)
-        if has_rerank:
-            top1_signal = min(0.20, max(0.0, top1_score))
-        else:
-            top1_signal = min(0.20, top1_score * 10)
+        top1_signal = min(0.20, max(0.0, top1_score)) if has_rerank else min(0.20, top1_score * 10)
 
         # --- 信号 3：平均相关性（0~0.15 分）---
         all_scores = []
@@ -512,10 +509,7 @@ class EvaluateTool(BaseTool):
             all_scores.append(s)
 
         avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
-        if has_rerank:
-            avg_signal = min(0.15, max(0.0, avg_score))
-        else:
-            avg_signal = min(0.15, avg_score * 10)
+        avg_signal = min(0.15, max(0.0, avg_score)) if has_rerank else min(0.15, avg_score * 10)
 
         # --- 信号 4：RRF 双路命中比例（0~0.10 分）---
         both_hit_count = sum(

@@ -1,19 +1,21 @@
-from typing import Optional, List, Dict, Any, AsyncGenerator
-from datetime import datetime
 import asyncio
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from app.db.session import SessionLocal
-from app.entities.database import Conversation, ChatMessage, MessageRole
-from app.entities.schemas import ConversationCreate, ConversationUpdate
-from app.rag.retriever import HybridRetriever
-from app.core.config import get_settings
-from app.agent.main_agent import MainAgent
-from app.llm.providers import get_generation_llm, get_rewrite_llm
-from app.services.memory_service import MemoryService
-import httpx
 import json
 import time
+from datetime import datetime
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
+import httpx
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.agent.main_agent import MainAgent
+from app.core.config import get_settings
+from app.db.session import SessionLocal
+from app.entities.database import ChatMessage, Conversation, MessageRole
+from app.entities.schemas import ConversationCreate, ConversationUpdate
+from app.llm.providers import get_generation_llm, get_rewrite_llm
+from app.rag.retriever import HybridRetriever
+from app.services.memory_service import MemoryService
 
 settings = get_settings()
 
@@ -232,7 +234,6 @@ class ChatService:
         memory_service = None
         memory_context = {"summary": "", "unsummarized_messages": [], "long_term_memories": [], "token_budget": {}}
         standalone_query = query
-        created_memories = []
         # 运行 MainAgent 编排器
         try:
             memory_service = MemoryService(self.db, self.retriever.vector_store)
@@ -258,7 +259,7 @@ class ChatService:
             tool_calls = result.get("tool_calls", [])
             retrieved = result.get("retrieved", False)
             elapsed_time = result.get("elapsed_time", 0)
-            
+
             # 从 RAGGraph 获取详细执行信息
             attempt_count = result.get("attempt_count", 0)
             query_history = result.get("query_history", [])
@@ -266,7 +267,7 @@ class ChatService:
             evaluation_reason = result.get("evaluation_reason", "")
             execution_log = result.get("execution_log", [])
             documents = result.get("documents", [])
-            
+
             # 传统 RAG 格式的调试信息
             retrieval_steps = result.get("retrieval_steps", [])
             chunks_by_type = result.get("chunks_by_type", {"small": 0, "medium": 0, "large": 0})

@@ -1,25 +1,26 @@
-from typing import List, Optional
 from datetime import datetime
+from typing import List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.core.dependencies import get_conflict_service, get_vector_store
+from app.core.security import get_current_admin_user
 from app.db.session import get_db
+from app.entities.database import ChatMessage, Conversation, Document, DocumentChunk, User
 from app.entities.schemas import (
-    UserResponse,
-    DocumentResponse,
-    DocumentWithConflictStatusResponse,
-    UserUpdate,
-    StatsResponse,
     ChunkDetailResponse,
     ChunkPatchRequest,
+    DocumentWithConflictStatusResponse,
+    StatsResponse,
+    UserResponse,
+    UserUpdate,
 )
-from app.entities.database import User, Document, DocumentChunk, Conversation, ChatMessage, UserRole
-from app.core.security import get_current_admin_user
-from app.services.user_service import UserService
-from app.services.document_service import DocumentService
-from app.services.conflict_service import ConflictService
-from app.core.dependencies import get_vector_store, get_conflict_service
 from app.rag.vector_store import MilvusStore
+from app.services.conflict_service import ConflictService
+from app.services.document_service import DocumentService
+from app.services.user_service import UserService
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 

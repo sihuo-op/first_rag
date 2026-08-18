@@ -5,10 +5,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.rag.vector_store import MilvusStore
 from app.rag.retriever import HybridRetriever, SparseRetriever
-from app.services.conflict_service import ConflictService
+from app.rag.vector_store import MilvusStore
 from app.services.cold_knowledge_service import ColdKnowledgeService
+from app.services.conflict_service import ConflictService
 
 _settings = get_settings()
 _singleton_lock = threading.RLock()
@@ -53,8 +53,8 @@ def _build_kg_retriever(vector_store: MilvusStore):
     if not _settings.KG_ENABLED:
         return None
     try:
-        from app.knowledge_graph.kg_retriever import KGRetriever
         from app.knowledge_graph.graph_store import get_graph_store
+        from app.knowledge_graph.kg_retriever import KGRetriever
         return KGRetriever(
             store=get_graph_store(),
             vector_store=vector_store,

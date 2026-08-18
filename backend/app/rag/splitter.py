@@ -4,9 +4,10 @@
 三层分块策略：Large/Medium/Small
 """
 
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any
 import re
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional
+
 import tiktoken
 
 
@@ -14,7 +15,7 @@ class TextSplitter(ABC):
     """切分器基类"""
 
     @abstractmethod
-    def split(self, text: str, metadata: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def split(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         pass
 
 
@@ -42,7 +43,7 @@ class ThreeLayerSplitter(TextSplitter):
         self.overlap = overlap
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
 
-    def split(self, text: str, metadata: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    def split(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         all_chunks = []
 
         # 第一层：大段切分（带 offset）

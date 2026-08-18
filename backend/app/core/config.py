@@ -1,9 +1,10 @@
-from pydantic_settings import BaseSettings
-from typing import Optional
+import os
 from functools import lru_cache
 from pathlib import Path
-import os
+from typing import Optional
+
 from dotenv import dotenv_values
+from pydantic_settings import BaseSettings
 
 # 项目根目录的 .env 文件
 ENV_FILE_PATH = Path(__file__).parent.parent.parent.parent / ".env"
@@ -166,6 +167,6 @@ class Settings(BaseSettings):
         extra = "ignore"  # 忽略 .env 中的额外字段如 HF_ENDPOINT
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     return Settings()

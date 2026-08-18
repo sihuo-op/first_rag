@@ -1,21 +1,22 @@
-from typing import Optional, List, Dict, Any
-import os
-import uuid
 import hashlib
 import logging
+import os
+import uuid
+from typing import List, Optional
+
+from fastapi import BackgroundTasks, UploadFile
 from sqlalchemy.orm import Session
-from fastapi import UploadFile, BackgroundTasks
-from app.entities.database import Document, DocumentChunk, DocumentStatus, ChunkType
-from app.entities.schemas import DocumentCreate, DocumentUpdate
-from app.rag.parsers import get_parser
-from app.rag.splitter import ThreeLayerSplitter
-from app.rag.vector_store import MilvusStore
-from app.rag.retriever import HybridRetriever
-from app.services.conflict_service import ConflictService
+
 from app.core.config import get_settings
 from app.core.dependencies import get_vector_store
+from app.entities.database import ChunkType, Document, DocumentChunk, DocumentStatus
 from app.knowledge_graph.extractor import KGExtractor
 from app.knowledge_graph.graph_store import get_graph_store
+from app.rag.parsers import get_parser
+from app.rag.retriever import HybridRetriever
+from app.rag.splitter import ThreeLayerSplitter
+from app.rag.vector_store import MilvusStore
+from app.services.conflict_service import ConflictService
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +99,8 @@ class DocumentService:
         self,
         file: UploadFile,
         user_id: int,
-        title: str = None,
-        background_tasks: BackgroundTasks = None
+        title: Optional[str] = None,
+        background_tasks: Optional[BackgroundTasks] = None
     ) -> Document:
         """
         上传并处理文档

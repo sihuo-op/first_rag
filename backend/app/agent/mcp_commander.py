@@ -10,14 +10,12 @@ LLM 自主决定调哪个 MCP 工具、传什么参数，不再硬编码 tool_na
 4. 工具结果再给 LLM → 生成最终回答
 """
 
-import time
 import json
-import asyncio
+import time
 from typing import Any, Dict, List, Optional
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-
 
 # 最大 ReAct 循环轮次（防止死循环）
 MAX_ITERATIONS = 5
@@ -96,7 +94,7 @@ class MCPCommander:
 
     async def _llm_chat(self, messages: List[Dict], tools: Optional[List[Dict]] = None) -> Dict:
         """调用 LLM（OpenAI 兼容接口），支持 tool_use"""
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
         # 转换为 LangChain 消息格式
         lc_messages = []
@@ -217,7 +215,7 @@ class MCPCommander:
                             tool_result = await self._call_mcp_tool(session, tool_name, tool_args)
                             tool_calls_log.append({"tool": tool_name, "args": tool_args, "status": "success"})
                         except Exception as e:
-                            tool_result = f"工具调用失败: {str(e)}"
+                            tool_result = f"工具调用失败: {e!s}"
                             tool_calls_log.append({"tool": tool_name, "args": tool_args, "status": "error", "error": str(e)})
 
                         messages.append({
@@ -230,7 +228,7 @@ class MCPCommander:
                     # 超过最大迭代次数，强行让 LLM 做最终回答（不带工具）
                     final_response = await self._llm_chat(messages, tools=None)
                     answer = final_response["content"]
-                    print(f"[Agent] 达到最大迭代次数，强制结束")
+                    print("[Agent] 达到最大迭代次数，强制结束")
 
                 elapsed_time = time.time() - start_time
 

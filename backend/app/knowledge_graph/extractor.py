@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from app.core.observability import get_tracer
 from app.knowledge_graph.entity_resolver import EntityResolver, ResolvedEntity
-from app.knowledge_graph.llm_extractor import extract_from_chunk, ExtractionResult
+from app.knowledge_graph.llm_extractor import ExtractionResult, extract_from_chunk
 from app.knowledge_graph.rule_parser import COUNTRY_PREFIX, parse_document
 from app.llm.providers import get_extraction_llm
 
@@ -64,7 +64,7 @@ class KGExtractor:
             with tracer.start_as_current_span("kg.extract.pipeline") as span:
                 span.set_attribute("document.id", document_id)
                 report = self._run_impl(document_id, span)
-        except Exception as exc:  # noqa: BLE001 - 后台任务入口必须吞掉一切异常
+        except Exception as exc:
             logger.error(
                 "kg.extract pipeline failed document_id=%s: %s", document_id, exc,
                 exc_info=exc,
@@ -109,7 +109,7 @@ class KGExtractor:
                 try:
                     self._process_chunk(chunk, parsed, resolver, llm, cspan,
                                         all_resolved, all_relations, article_id_by_no)
-                except Exception as exc:  # noqa: BLE001 - 单 chunk 失败不应中断整个文档
+                except Exception as exc:
                     cspan.record_exception(exc)
                     cspan.set_attribute("error.kind", "chunk_extract_failed")
                     logger.warning(
@@ -221,13 +221,12 @@ class KGExtractor:
         if ref_type == "party":
             return name_to_id.get(("Party", parts[1]))
         if ref_type == "article":
-            # format: article:<法名>:<条号>
-            if len(parts) == 3:
-                if _normalize_law_name(parts[1]) != _normalize_law_name(law_name):
-                    return None
-                try:
-                    article_no = int(parts[2])
-                except ValueError:
-                    return None
-                return article_id_by_no.get(article_no)
+            # format: article:<法名>:<条号>；法名必须匹配当前文档所属法律
+            if len(parts) != 3 or _normalize_law_name(parts[1]) != _normalize_law_name(law_name):
+                return None
+            try:
+                article_no = int(parts[2])
+            except ValueError:
+                return None
+            return article_id_by_no.get(article_no)
         return None

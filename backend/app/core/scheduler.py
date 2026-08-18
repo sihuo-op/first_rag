@@ -8,8 +8,8 @@ APScheduler 调度器
 使用 SQLAlchemyJobStore 持久化到 PG/SQLite，重启不丢。
 多副本部署时通过 PG 行锁保证单实例执行（TODO: 后续如需多副本再加）。
 """
-from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import get_settings
@@ -22,8 +22,8 @@ _scheduler: BackgroundScheduler = None
 
 def _run_cold_knowledge_sweep():
     """定时任务：冷知识扫描"""
-    from app.db.session import SessionLocal
     from app.core.dependencies import get_vector_store
+    from app.db.session import SessionLocal
     from app.services.cold_knowledge_service import ColdKnowledgeService
     db = SessionLocal()
     try:
@@ -39,8 +39,8 @@ def _run_cold_knowledge_sweep():
 
 def _run_hard_delete_sweep():
     """定时任务：硬删除过期归档"""
-    from app.db.session import SessionLocal
     from app.core.dependencies import get_vector_store
+    from app.db.session import SessionLocal
     from app.services.cold_knowledge_service import ColdKnowledgeService
     db = SessionLocal()
     try:

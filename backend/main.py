@@ -1,21 +1,23 @@
 # 在所有导入之前设置临时目录（用于 jieba 等库的缓存）
 import os
 from pathlib import Path
+
 JIEBA_CACHE_DIR = Path(__file__).parent / "data" / "jieba_cache"
 JIEBA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 os.environ["TEMP"] = str(JIEBA_CACHE_DIR)
 os.environ["TMP"] = str(JIEBA_CACHE_DIR)
 os.environ["TMPDIR"] = str(JIEBA_CACHE_DIR)
 
+import asyncio
+import time
+
+from app.api import admin, auth, chat, documents
+from app.core.config import get_settings
+from app.db.init_db import init_db
+from app.entities.schemas import HealthResponse
+from app.knowledge_graph import kg_admin  # KG 审核/后台 API
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import auth, documents, chat, admin
-from app.knowledge_graph import kg_admin  # KG 审核/后台 API
-from app.db.init_db import init_db
-from app.core.config import get_settings
-from app.entities.schemas import HealthResponse
-import time
-import asyncio
 
 settings = get_settings()
 
@@ -53,8 +55,9 @@ if settings.KG_ENABLED:
     app.include_router(kg_admin.router)
 
 # OTel 初始化（必须在所有 middleware 和 router 注册之后，使 OTel 成为最外层 middleware）
-from app.core.observability import setup_otel, instrument_app
+from app.core.observability import instrument_app, setup_otel
 from app.db.session import engine as db_engine
+
 setup_otel(settings)
 instrument_app(app, engine=db_engine)
 
@@ -109,11 +112,11 @@ async def startup_event():
     # 绝不因 KG 基础设施故障阻止应用启动 —— 与 KG 全局"失败回退"约束一致。
     if settings.KG_ENABLED:
         print("[5/5] Initializing Neo4jStore...")
-        from app.knowledge_graph.graph_store import get_graph_store, reset_graph_store
+        from app.knowledge_graph.graph_store import get_graph_store
         try:
             get_graph_store()
             print("Neo4jStore initialized")
-        except Exception as exc:  # noqa: BLE001 - KG 可选，失败仅降级
+        except Exception as exc:
             print(f"Neo4jStore unavailable, KG disabled for this run: {exc}")
 
     print("=" * 50)
@@ -148,7 +151,7 @@ async def _warmup_inference():
             import jieba
             jieba.initialize()
 
-            from app.core.dependencies import get_vector_store, get_retriever
+            from app.core.dependencies import get_retriever, get_vector_store
             get_vector_store().embed_query("劳动合同 试用期 预热")
 
             retriever = get_retriever()
@@ -174,7 +177,7 @@ async def _load_bm25_index(retriever):
     try:
         print("Loading existing documents into BM25 index (background)...")
         from app.db.session import SessionLocal
-        from app.entities.database import DocumentChunk, DocumentStatus, Document
+        from app.entities.database import Document, DocumentChunk, DocumentStatus
         db = SessionLocal()
         try:
             chunks = db.query(DocumentChunk).join(Document).filter(

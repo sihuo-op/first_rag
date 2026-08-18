@@ -1,18 +1,25 @@
 from typing import List
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from app.db.session import get_db
-from app.entities.schemas import (
-    ConversationResponse, ConversationCreate, ConversationUpdate,
-    ChatMessageResponse, ChatRequest, ChatResponse, ChatMode,
-    FeedbackCreate, FeedbackResponse
-)
-from app.entities.database import User, MessageFeedback
-from app.core.security import get_current_active_user
-from app.services.chat_service import ChatService
+
 from app.core.dependencies import get_retriever
+from app.core.security import get_current_active_user
+from app.db.session import get_db
+from app.entities.database import MessageFeedback, User
+from app.entities.schemas import (
+    ChatMessageResponse,
+    ChatRequest,
+    ChatResponse,
+    ConversationCreate,
+    ConversationResponse,
+    ConversationUpdate,
+    FeedbackCreate,
+    FeedbackResponse,
+)
 from app.rag.retriever import HybridRetriever
+from app.services.chat_service import ChatService
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
@@ -137,7 +144,7 @@ async def chat(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(e)
-        )
+        ) from e
 
 
 @router.post("/feedback", response_model=FeedbackResponse)

@@ -153,7 +153,7 @@ class EntityResolver:
     def _find_by_embedding_similarity(self, name: str) -> dict | None:
         try:
             embedding = self.embedding_fn(name)
-        except Exception:  # noqa: BLE001 - embedding 模型异常不应中断合并
+        except Exception:
             return None
         with self.store.session() as s:
             result = s.run(
@@ -179,5 +179,5 @@ class EntityResolver:
         try:
             response = invoke_llm_threadsafe(self.llm, [HumanMessage(content=prompt)])
             return "true" in response.content.strip().lower()
-        except Exception:  # noqa: BLE001 - LLM 异常时保守视为不同概念
+        except Exception:
             return False

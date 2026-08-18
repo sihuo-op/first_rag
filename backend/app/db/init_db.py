@@ -1,10 +1,9 @@
-import os
-from sqlalchemy.orm import Session
 from sqlalchemy import inspect, text
-from app.entities.database import Base, User, UserRole
-from app.core.security import get_password_hash
+
 from app.core.config import get_settings
-from app.db.session import engine, SessionLocal
+from app.core.security import get_password_hash
+from app.db.session import SessionLocal, engine
+from app.entities.database import Base, User, UserRole
 
 settings = get_settings()
 

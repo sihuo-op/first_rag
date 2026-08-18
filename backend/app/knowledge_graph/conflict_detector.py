@@ -151,7 +151,7 @@ class ConflictDetector:
         for attempt in range(MAX_LLM_RETRIES + 1):
             try:
                 return invoke_llm_threadsafe(self.llm, messages)
-            except Exception as exc:  # noqa: BLE001 - LLM 提供方异常类型不固定
+            except Exception as exc:
                 last_exc = exc
                 logger.warning(
                     "kg.extract.conflict llm call failed attempt=%d/%d: %s",

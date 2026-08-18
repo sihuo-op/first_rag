@@ -123,13 +123,11 @@ class ConflictService:
                 total = len(new_chunks)
                 print(f"[ConflictService] doc {doc_id}: detecting conflicts for {total} chunks")
 
-                processed = 0
-                for chunk in new_chunks:
+                for processed, chunk in enumerate(new_chunks, start=1):
                     try:
                         self._detect_for_single_chunk(chunk, doc_id)
                     except Exception as e:
                         print(f"[ConflictService] chunk {chunk.id} detect failed: {e}")
-                    processed += 1
                     document.conflict_check_progress = f"{processed}/{total}"
                     self.db.commit()
 

@@ -63,11 +63,11 @@ def main():
 
     # Deferred imports so --help works without Neo4j/Milvus deps loaded
     from app.core.dependencies import get_vector_store
+    from app.db.session import SessionLocal
+    from app.entities.database import Document
     from app.knowledge_graph.extractor import KGExtractor
     from app.knowledge_graph.graph_store import get_graph_store
     from app.services.document_service import _load_chunks_for_kg, _load_document_text_for_kg
-    from app.db.session import SessionLocal
-    from app.entities.database import Document
 
     conflict_detector = _NullConflictDetector() if args.skip_conflicts else None
     extractor = KGExtractor(

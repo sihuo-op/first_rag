@@ -1,13 +1,13 @@
 from datetime import timedelta
-from typing import Optional, Tuple
+from typing import Optional
+
 from sqlalchemy.orm import Session
-from app.core.security import (
-    create_access_token, create_refresh_token, decode_token
-)
+
+from app.core.config import get_settings
+from app.core.security import create_access_token, create_refresh_token, decode_token
 from app.entities.database import User
 from app.entities.schemas import Token
 from app.services.user_service import UserService
-from app.core.config import get_settings
 
 settings = get_settings()
 

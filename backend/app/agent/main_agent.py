@@ -2,15 +2,14 @@ import asyncio
 import json
 import re
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage
-from opentelemetry import trace
 
-from app.core.observability import get_tracer
-from app.rag.graph import RAGGraph
 from app.agent.rag_qa_tool import RAGQATool
+from app.core.observability import get_tracer
 from app.llm.providers import get_generation_llm, invoke_llm_threadsafe
+from app.rag.graph import RAGGraph
 
 tracer = get_tracer("agent")
 
@@ -18,12 +17,12 @@ tracer = get_tracer("agent")
 class MainAgent:
     """
     主 Agent 编排器 - 直接路由到知识库工具，不使用 ReAct 循环
-    
+
     核心逻辑：
     1. 判断问题是否涉及劳动法相关知识
     2. 如果是，直接调用 knowledge_qa 工具一次
     3. 返回工具结果，不做额外决策
-    
+
     优点：
     - 避免 LLM 思考耗时（节省约 15 秒）
     - 保证只调用一次工具，不会死循环
@@ -64,7 +63,7 @@ class MainAgent:
     ):
         """
         初始化主 Agent 编排器
-        
+
         Args:
             llm: 主 LLM 模型
             retriever: 检索器
@@ -83,31 +82,28 @@ class MainAgent:
     def _is_labor_law_question(self, question: str) -> bool:
         """
         判断问题是否涉及劳动法相关知识
-        
+
         Args:
             question: 用户问题
-            
+
         Returns:
             bool: 是否为劳动法相关问题
         """
         question_lower = question.lower()
-        for keyword in self.LABOR_LAW_KEYWORDS:
-            if keyword.lower() in question_lower:
-                return True
-        return False
+        return any(keyword.lower() in question_lower for keyword in self.LABOR_LAW_KEYWORDS)
 
     def run(self, question: str) -> Dict[str, Any]:
         """
         运行主 Agent 编排器
-        
+
         Args:
             question: 用户问题
-            
+
         Returns:
             Dict: 包含答案、调试信息等的结果
         """
         start_time = time.time()
-        
+
         rag_result = None
 
         # 判断问题类型
@@ -230,7 +226,7 @@ class MainAgent:
                     return {
                         "task_id": task["id"],
                         "question": task["question"],
-                        "answer": f"子任务执行失败: {str(e)}",
+                        "answer": f"子任务执行失败: {e!s}",
                         "tool": "rag_qa",
                         "args": {"question": task["question"]},
                         "documents": [],
@@ -435,10 +431,10 @@ class MainAgent:
     def _direct_answer_impl(self, question: str) -> str:
         """
         直接回答非知识库问题
-        
+
         Args:
             question: 用户问题
-            
+
         Returns:
             str: 直接回答内容
         """
@@ -446,9 +442,9 @@ class MainAgent:
         greetings = ["你好", "您好", "嗨", "hello", "hi"]
         thanks = ["谢谢", "感谢", "辛苦了"]
         about = ["你是谁", "你叫什么", "自我介绍", "什么是"]
-        
+
         question_lower = question.lower()
-        
+
         if any(g in question_lower for g in greetings):
             return "您好！我是专业的劳动法知识助手，请问有什么可以帮助您的？"
         elif any(t in question_lower for t in thanks):
@@ -461,9 +457,9 @@ class MainAgent:
                 response = invoke_llm_threadsafe(self.llm, question)
                 return response.content if hasattr(response, "content") else str(response)
             except Exception:
-                return f"这个问题我不太清楚，请问您有关于劳动法方面的问题吗？"
+                return "这个问题我不太清楚，请问您有关于劳动法方面的问题吗？"
 
-    def _print_summary(self, elapsed_time: float, tool_calls: List[Dict[str, Any]], rag_result: Dict[str, Any] = None):
+    def _print_summary(self, elapsed_time: float, tool_calls: List[Dict[str, Any]], rag_result: Optional[Dict[str, Any]] = None):
         """
         打印执行汇总信息
 
@@ -477,22 +473,22 @@ class MainAgent:
         generation_time = rag_result.get("generation_time", 0)
         elapsed_time_rag = rag_result.get("elapsed_time", 0)
         tool_call_count = len(tool_calls)
-        
+
         print(f"\n{'='*60}")
-        print(f"MainAgent 执行完成")
+        print("MainAgent 执行完成")
         print(f"{'='*60}")
         print(f"  总耗时: {round(elapsed_time, 3)}s")
         print(f"  工具调用次数: {tool_call_count} 次")
         print(f"  RAGGraph 耗时: {round(elapsed_time_rag, 3)}s")
         print(f"  其他耗时: {round(elapsed_time - elapsed_time_rag, 3)}s")
         print(f"{'='*60}")
-        
+
         if step_timings:
             for idx, timing in enumerate(step_timings):
                 print(f"  迭代 {idx+1}:")
                 for step, duration in timing.get("steps", {}).items():
                     print(f"    - {step}: {duration}s")
                 print(f"    总计: {timing.get('total_time', 0)}s")
-        
+
         print(f"  答案生成: {generation_time}s")
         print(f"{'='*60}\n")

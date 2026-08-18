@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta
-from typing import Optional, Union
+from typing import Optional
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.entities.database import User

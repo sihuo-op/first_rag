@@ -66,7 +66,7 @@ class KGRetriever:
             logger.warning("KG 检索失败（KGError），降级为空结果: %s", e)
             self._record_error_span(query, e)
             return []
-        except Exception as e:  # noqa: BLE001 - 全局约束：KG 失败绝不拖垮主检索链路
+        except Exception as e:
             logger.warning("KG 检索失败（意外异常），降级为空结果: %s", e)
             self._record_error_span(query, e)
             return []

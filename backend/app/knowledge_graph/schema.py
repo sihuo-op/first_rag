@@ -1,6 +1,7 @@
 """KG 数据模型：节点/边类型枚举、Pydantic 模型、Cypher 标签常量。"""
 from enum import Enum
 from typing import Optional
+
 from pydantic import BaseModel, Field
 
 

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.observability import get_tracer
-from app.entities.database import ChatMessage, ConversationSummary, MemoryType, MessageRole, UserMemory
+from app.entities.database import ChatMessage, ConversationSummary, MemoryType, UserMemory
 from app.llm.providers import get_rewrite_llm, invoke_llm_threadsafe
 from app.rag.vector_store import MilvusStore
 from app.services.token_budget import TokenBudget
@@ -234,10 +234,7 @@ class MemoryService:
         model_window = self.settings.REWRITE_MODEL_CONTEXT_WINDOW
         reserved = self.settings.MEMORY_RESERVED_OUTPUT_TOKENS
         budget = int((model_window - reserved) * self.settings.MEMORY_CONTEXT_RATIO)
-        if messages and isinstance(messages[0], dict):
-            message_dicts = messages
-        else:
-            message_dicts = self._serialize_messages(messages)
+        message_dicts = messages if messages and isinstance(messages[0], dict) else self._serialize_messages(messages)
         used = self.token_budget.count_text(summary or "") + self.token_budget.count_messages(message_dicts) + self.token_budget.count_text(query)
         return {"used": used, "budget": max(1, budget), "ratio": self.settings.MEMORY_CONTEXT_RATIO, "compressed": compressed}
 

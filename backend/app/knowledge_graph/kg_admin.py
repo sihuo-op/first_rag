@@ -27,7 +27,7 @@ def _get_store():
     try:
         return get_graph_store()
     except KGError as e:
-        raise HTTPException(status_code=503, detail=f"KG unavailable: {e}")
+        raise HTTPException(status_code=503, detail=f"KG unavailable: {e}") from e
 
 
 class ReviewRequest(BaseModel):

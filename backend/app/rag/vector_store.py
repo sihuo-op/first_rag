@@ -7,12 +7,13 @@ Milvus 向量数据库封装，集成了 embedding 模型，负责：
 3. 相似度搜索
 """
 
-from typing import List, Dict, Any, Optional
 import json
 import logging
 import threading
 import uuid
-from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility, MilvusException
+from typing import Any, Dict, List, Optional
+
+from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, MilvusException, connections, utility
 from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,7 @@ class MilvusStore:
         """获取 embedding 向量维度"""
         return self.dimension
 
-    def create_collection(self, collection_name: str, dimension: int = None) -> None:
+    def create_collection(self, collection_name: str, dimension: Optional[int] = None) -> None:
         """
         创建向量集合（如果已存在则跳过）
 
@@ -196,7 +197,7 @@ class MilvusStore:
             with self._collections_lock:
                 self._collections.pop(full_name, None)
 
-    def add_texts(self, collection_name: str, texts: List[str], metadata_list: List[Dict] = None) -> List[str]:
+    def add_texts(self, collection_name: str, texts: List[str], metadata_list: Optional[List[Dict]] = None) -> List[str]:
         """
         批量添加文本（自动向量化）
 
@@ -213,7 +214,7 @@ class MilvusStore:
         vectors = self.embed_texts(texts)
         return self.insert_vectors(collection_name, vectors, texts, metadata_list)
 
-    def insert_vectors(self, collection_name: str, vectors: List[List[float]], documents: List[str], metadata_list: List[Dict] = None) -> List[str]:
+    def insert_vectors(self, collection_name: str, vectors: List[List[float]], documents: List[str], metadata_list: Optional[List[Dict]] = None) -> List[str]:
         """
         批量插入向量和对应文档（不经过 embedding）
 
@@ -236,7 +237,7 @@ class MilvusStore:
         chunk_types = [meta.get("chunk_type", "small") for meta in metadata_list] if metadata_list else ["small"] * len(vectors)
         content_hashes = [
             meta.get("content_hash") or hashlib.sha256(doc.encode("utf-8")).hexdigest()
-            for meta, doc in zip(metadata_list or [{}] * len(documents), documents)
+            for meta, doc in zip(metadata_list or [{}] * len(documents), documents, strict=False)
         ]
         statuses = ["active"] * len(vectors)
         # char_start/char_end 从 metadata 读取，缺省 0
@@ -328,7 +329,7 @@ class MilvusStore:
             for hit in results[0]
         ]
 
-    def create_memory_collection(self, collection_name: str, dimension: int = None) -> None:
+    def create_memory_collection(self, collection_name: str, dimension: Optional[int] = None) -> None:
         """创建用户长期记忆向量集合。"""
         self.connect()
         full_name = self._get_full_name(collection_name)

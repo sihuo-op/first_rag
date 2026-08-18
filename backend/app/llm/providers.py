@@ -62,6 +62,7 @@ class OpenAIProvider(BaseLLMProvider):
     def get_llm(self) -> BaseChatModel:
         if self._llm is None:
             from langchain_openai import ChatOpenAI
+
             from app.core.config import get_settings
             _settings = get_settings()
             self._llm = ChatOpenAI(
@@ -83,8 +84,9 @@ def get_provider(config: LLMConfig) -> BaseLLMProvider:
 
 def get_generation_llm() -> BaseChatModel:
     """获取生成用 LLM（中等温度）。关闭思考模式：推理 token 会显著拉长首答延迟。"""
-    from app.core.config import get_settings
     from langchain_openai import ChatOpenAI
+
+    from app.core.config import get_settings
     _settings = get_settings()
     return ChatOpenAI(
         model=_settings.GENERATION_LLM_MODEL or _settings.CHAT_MODEL,
@@ -98,8 +100,9 @@ def get_generation_llm() -> BaseChatModel:
 
 def get_rewrite_llm() -> BaseChatModel:
     """获取改写用 LLM（低温度，关思考）。"""
-    from app.core.config import get_settings
     from langchain_openai import ChatOpenAI
+
+    from app.core.config import get_settings
     _settings = get_settings()
     return ChatOpenAI(
         model=_settings.REWRITE_LLM_MODEL or _settings.CHAT_MODEL,
@@ -113,8 +116,9 @@ def get_rewrite_llm() -> BaseChatModel:
 
 def get_evaluation_llm() -> BaseChatModel:
     """获取评估用 LLM（低温、短输出、关思考）。"""
-    from app.core.config import get_settings
     from langchain_openai import ChatOpenAI
+
+    from app.core.config import get_settings
     _settings = get_settings()
     return ChatOpenAI(
         model=_settings.EVALUATION_LLM_MODEL or _settings.GENERATION_LLM_MODEL or _settings.CHAT_MODEL,
@@ -128,8 +132,9 @@ def get_evaluation_llm() -> BaseChatModel:
 
 def get_extraction_llm() -> BaseChatModel:
     """抽取用 LLM：温度 0，输出 JSON 格式严格。"""
-    from app.core.config import get_settings
     from langchain_openai import ChatOpenAI
+
+    from app.core.config import get_settings
     s = get_settings()
     model = s.KG_EXTRACTION_LLM_MODEL or s.CHAT_MODEL
     return ChatOpenAI(

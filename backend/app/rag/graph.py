@@ -7,11 +7,12 @@ LangGraph ReAct Agent - Agentic RAG
 """
 
 import time
-from typing import Optional, List, Dict, Any, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
+
 from langchain_core.language_models import BaseChatModel
 
 from app.core.observability import get_tracer
-from app.rag.steps import RetrieveTool, RewriteTool, GenerateTool, EvaluateTool
+from app.rag.steps import EvaluateTool, GenerateTool, RetrieveTool, RewriteTool
 
 tracer = get_tracer("rag.graph")
 
@@ -56,9 +57,9 @@ def create_initial_state(question: str, max_attempts: int = 4) -> AgentState:
 class RAGGraph:
     """
     Agentic RAG Graph - 基于状态机的迭代检索增强生成
-    
+
     核心流程：
-    1. 接收问题 → 2. 改写查询 → 3. 检索文档 → 4. 评估结果 → 
+    1. 接收问题 → 2. 改写查询 → 3. 检索文档 → 4. 评估结果 →
     5. (置信度不足) → 重新改写 → 检索 → ... → 6. 生成最终答案
     """
 
@@ -73,7 +74,7 @@ class RAGGraph:
     ):
         """
         初始化 RAG Graph
-        
+
         Args:
             retriever: HybridRetriever 实例
             generation_llm: 生成答案用的 LLM
@@ -110,7 +111,7 @@ class RAGGraph:
             包含回答、检索文档、执行日志等信息的字典
         """
         start_time = time.time()
-        
+
         # 初始化状态
         state = create_initial_state(question, self.max_attempts)
         state["retrieval_debug_info"] = []  # 保存每次检索的详细调试信息
@@ -130,7 +131,7 @@ class RAGGraph:
                 # 如果 query_history 有多个未检索的查询（expand 生成的），分别检索并合并
                 current_query = state["query_history"][-1]
                 all_queries_to_search = [current_query]
-                
+
                 # 如果是 expand 改写，query_history 中可能有多个新查询
                 # 检查是否有未检索过的查询（从上次检索后新增的）
                 last_retrieved_idx = state.get("_last_retrieved_query_idx", 0)
@@ -138,25 +139,25 @@ class RAGGraph:
                 if len(new_queries) > 1:
                     all_queries_to_search = new_queries
                     print(f"[DEBUG] expand 模式：使用 {len(new_queries)} 个查询分别检索")
-                
+
                 # 用所有查询分别检索，合并结果
                 all_documents = []
                 seen_contents = set()  # 去重
                 total_retrieve_time = 0
-                
+
                 for q in all_queries_to_search:
                     retrieve_start = time.time()
                     retrieve_result = self.retrieve_tool.execute({"current_query": q})
                     retrieve_time = time.time() - retrieve_start
                     total_retrieve_time += retrieve_time
-                    
+
                     if retrieve_result.success:
                         for doc in retrieve_result.data.get("documents", []):
                             content_key = doc.get("content", "")[:100]
                             if content_key not in seen_contents:
                                 seen_contents.add(content_key)
                                 all_documents.append(doc)
-                
+
                 iteration_timing["steps"]["retrieve"] = round(total_retrieve_time, 3)
                 if all_documents:
                     state["documents"] = all_documents
@@ -165,7 +166,7 @@ class RAGGraph:
                         if candidate_key and all(candidate_key != item.get("content", "")[:100] for item in state["candidate_documents"]):
                             state["candidate_documents"].append(doc)
                 state["_last_retrieved_query_idx"] = len(state["query_history"])
-                
+
                 # 保存检索调试信息
                 if all_queries_to_search != [current_query]:
                     # expand 模式，构造合并后的调试信息
@@ -183,7 +184,7 @@ class RAGGraph:
                         "retrieve_time": round(total_retrieve_time, 3),
                         **retrieve_result.debug_info
                     })
-                
+
                 state["execution_log"].append({
                     "step": "retrieve",
                     "attempt": state["attempt_count"],
@@ -256,7 +257,7 @@ class RAGGraph:
                     should_stop_iteration = True
                 elif grade == "incorrect":
                     # Incorrect：检索结果与问题完全无关，必须改写查询重新检索
-                    print(f"[DEBUG] 评估为 incorrect，必须改写查询重新检索...")
+                    print("[DEBUG] 评估为 incorrect，必须改写查询重新检索...")
                     rewrite_start = time.time()
                     rewrite_result = self.rewrite_tool.execute({
                         "original_question": question,
@@ -268,13 +269,13 @@ class RAGGraph:
                     })
                     rewrite_time = time.time() - rewrite_start
                     iteration_timing["steps"]["rewrite"] = round(rewrite_time, 3)
-                    
+
                     print(f"[DEBUG] 改写结果: success={rewrite_result.success}, message={rewrite_result.message}")
 
                     if rewrite_result.success:
                         queries = rewrite_result.data.get("queries", [])
                         rewrite_type = rewrite_result.data.get("rewrite_type", "improve")
-                        
+
                         if rewrite_type == "expand" and len(queries) > 1:
                             # expand 模式：把所有同义词查询都加入 query_history
                             added_queries = []
@@ -282,7 +283,7 @@ class RAGGraph:
                                 if q != current_query and q not in state["query_history"]:
                                     state["query_history"].append(q)
                                     added_queries.append(q)
-                            
+
                             if added_queries:
                                 state["execution_log"].append({
                                     "step": "rewrite",
@@ -302,13 +303,13 @@ class RAGGraph:
                                     "time_s": round(rewrite_time, 3),
                                     "reason": "expand 未生成有效的新查询，使用当前结果"
                                 })
-                                print(f"[DEBUG] expand 未生成有效的新查询，退出循环")
+                                print("[DEBUG] expand 未生成有效的新查询，退出循环")
                                 break
                         else:
                             # improve/decompose 模式：只取第一个查询
                             new_query = queries[0] if queries else current_query
                             print(f"[DEBUG] 新查询: {new_query}, 原查询: {current_query}")
-                            
+
                             if new_query != current_query and new_query not in state["query_history"]:
                                 state["query_history"].append(new_query)
                                 state["execution_log"].append({
@@ -319,9 +320,9 @@ class RAGGraph:
                                     "rewrite_type": rewrite_type,
                                     "grade": grade,
                                     "time_s": round(rewrite_time, 3),
-                                    "reason": f"评估为 incorrect，改写查询重新检索"
+                                    "reason": "评估为 incorrect，改写查询重新检索"
                                 })
-                                print(f"[DEBUG] 查询改写成功，继续下一次迭代")
+                                print("[DEBUG] 查询改写成功，继续下一次迭代")
                             else:
                                 state["execution_log"].append({
                                     "step": "rewrite",
@@ -329,15 +330,15 @@ class RAGGraph:
                                     "time_s": round(rewrite_time, 3),
                                     "reason": "无法生成有效的新查询，使用当前结果"
                                 })
-                                print(f"[DEBUG] 无法生成有效的新查询，退出循环")
+                                print("[DEBUG] 无法生成有效的新查询，退出循环")
                                 break
                     else:
                         state["errors"].append(f"查询改写失败: {rewrite_result.message}")
-                        print(f"[DEBUG] 查询改写失败，退出循环")
+                        print("[DEBUG] 查询改写失败，退出循环")
                         break
                 else:
                     # Ambiguous：检索结果部分相关，改写查询补充检索
-                    print(f"[DEBUG] 评估为 ambiguous，尝试改写查询补充检索...")
+                    print("[DEBUG] 评估为 ambiguous，尝试改写查询补充检索...")
                     rewrite_start = time.time()
                     rewrite_result = self.rewrite_tool.execute({
                         "original_question": question,
@@ -349,13 +350,13 @@ class RAGGraph:
                     })
                     rewrite_time = time.time() - rewrite_start
                     iteration_timing["steps"]["rewrite"] = round(rewrite_time, 3)
-                    
+
                     print(f"[DEBUG] 改写结果: success={rewrite_result.success}, message={rewrite_result.message}")
 
                     if rewrite_result.success:
                         queries = rewrite_result.data.get("queries", [])
                         rewrite_type = rewrite_result.data.get("rewrite_type", "improve")
-                        
+
                         if rewrite_type == "expand" and len(queries) > 1:
                             # expand 模式：把所有同义词查询都加入 query_history
                             added_queries = []
@@ -363,7 +364,7 @@ class RAGGraph:
                                 if q != current_query and q not in state["query_history"]:
                                     state["query_history"].append(q)
                                     added_queries.append(q)
-                            
+
                             if added_queries:
                                 state["execution_log"].append({
                                     "step": "rewrite",
@@ -383,13 +384,13 @@ class RAGGraph:
                                     "time_s": round(rewrite_time, 3),
                                     "reason": "expand 未生成有效的新查询，使用当前部分相关结果"
                                 })
-                                print(f"[DEBUG] expand 未生成有效的新查询，使用当前结果生成答案")
+                                print("[DEBUG] expand 未生成有效的新查询，使用当前结果生成答案")
                                 break
                         else:
                             # improve/decompose 模式：只取第一个查询
                             new_query = queries[0] if queries else current_query
                             print(f"[DEBUG] 新查询: {new_query}, 原查询: {current_query}")
-                            
+
                             if new_query != current_query and new_query not in state["query_history"]:
                                 state["query_history"].append(new_query)
                                 state["execution_log"].append({
@@ -400,9 +401,9 @@ class RAGGraph:
                                     "rewrite_type": rewrite_type,
                                     "grade": grade,
                                     "time_s": round(rewrite_time, 3),
-                                    "reason": f"评估为 ambiguous，改写查询补充检索"
+                                    "reason": "评估为 ambiguous，改写查询补充检索"
                                 })
-                                print(f"[DEBUG] 查询改写成功，继续下一次迭代")
+                                print("[DEBUG] 查询改写成功，继续下一次迭代")
                             else:
                                 # 无法生成新的查询，用当前部分相关的结果生成答案
                                 state["execution_log"].append({
@@ -411,7 +412,7 @@ class RAGGraph:
                                     "time_s": round(rewrite_time, 3),
                                     "reason": "无法生成有效的新查询，使用当前部分相关结果"
                                 })
-                                print(f"[DEBUG] 无法生成有效的新查询，使用当前结果生成答案")
+                                print("[DEBUG] 无法生成有效的新查询，使用当前结果生成答案")
                                 break
                     else:
                         # 改写失败，用当前部分相关的结果生成答案
@@ -421,11 +422,11 @@ class RAGGraph:
                             "time_s": round(rewrite_time, 3),
                             "reason": f"查询改写失败，使用当前部分相关结果: {rewrite_result.message}"
                         })
-                        print(f"[DEBUG] 查询改写失败，使用当前结果生成答案")
+                        print("[DEBUG] 查询改写失败，使用当前结果生成答案")
                         break
 
             except Exception as e:
-                state["errors"].append(f"迭代 {state['attempt_count']} 出错: {str(e)}")
+                state["errors"].append(f"迭代 {state['attempt_count']} 出错: {e!s}")
                 state["execution_log"].append({
                     "step": "error",
                     "attempt": state["attempt_count"],
@@ -470,14 +471,14 @@ class RAGGraph:
                     state["answer"] = f"生成答案时出错: {generate_result.message}"
                     state["errors"].append(f"答案生成失败: {generate_result.message}")
             except Exception as e:
-                state["answer"] = f"生成答案时发生错误: {str(e)}"
-                state["errors"].append(f"答案生成异常: {str(e)}")
+                state["answer"] = f"生成答案时发生错误: {e!s}"
+                state["errors"].append(f"答案生成异常: {e!s}")
         else:
             state["answer"] = ""
             state["generation_time"] = 0
-        
+
         elapsed_time = time.time() - start_time
-        
+
         # 合并所有检索步骤的调试信息
         all_retrieval_steps = []
         chunks_by_type = {"small": 0, "medium": 0, "large": 0}
@@ -507,7 +508,7 @@ class RAGGraph:
                     detail_info["reranked_results"].extend(attempt_info["detail"].get("reranked_results", []))
 
         print(f"[DEBUG] 最终 detail_info.merged_results 包含 {len(detail_info['merged_results'])} 条记录")
-        
+
         # 打印阶段用时汇总
         print(f"\n{'='*50}")
         print(f"RAGGraph 执行完成，总耗时: {round(elapsed_time, 3)}s")
@@ -525,7 +526,7 @@ class RAGGraph:
         for idx, debug_info in enumerate(state.get("retrieval_debug_info", [])):
             timing_info = state.get("step_timings", [])[idx] if idx < len(state.get("step_timings", [])) else {}
             steps_with_timing = debug_info.get("steps", [])
-            
+
             iteration_entry = {
                 "attempt": debug_info.get("attempt"),
                 "query": debug_info.get("query"),
@@ -540,7 +541,7 @@ class RAGGraph:
                 }
             }
             iterations.append(iteration_entry)
-        
+
         # 将 execution_log 按迭代分组
         grouped_execution_log = []
         for attempt in range(1, state["attempt_count"] + 1):
@@ -570,7 +571,7 @@ class RAGGraph:
                         attempt_log["generation_time"] = log_entry.get("time_s", 0)  # 添加生成用时
             if attempt_log:
                 grouped_execution_log.append(attempt_log)
-        
+
         # 如果生成步骤不在任何迭代中，添加到最后
         generate_log = next((log for log in state["execution_log"] if log.get("step") == "generate"), None)
         if generate_log and (not grouped_execution_log or "llm_prompt" not in grouped_execution_log[-1]):

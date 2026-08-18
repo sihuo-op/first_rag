@@ -4,14 +4,15 @@
 包含稀疏检索（BM25）、重排序、混合检索
 """
 
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
-from datetime import datetime
-from collections import defaultdict
 import os
 import re
 import threading
 import time
+from abc import ABC, abstractmethod
+from collections import defaultdict
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import jieba
 from rank_bm25 import BM25Okapi
 
@@ -38,7 +39,7 @@ class SparseRetriever(BaseRetriever):
         self._tokenized_docs: List[List[str]] = []
         self._lock = threading.Lock()
 
-    def add_documents(self, documents: List[str], metadata_list: List[Dict[str, Any]] = None) -> None:
+    def add_documents(self, documents: List[str], metadata_list: Optional[List[Dict[str, Any]]] = None) -> None:
         if not documents:
             return
         with self._lock:
@@ -138,7 +139,7 @@ class Reranker:
                             export=True,
                             provider="CPUExecutionProvider",
                         )
-                        print(f"Quantizing to int8 (AVX2 dynamic)...")
+                        print("Quantizing to int8 (AVX2 dynamic)...")
                         quantizer = ORTQuantizer.from_pretrained(base_model)
                         qconfig = AutoQuantizationConfig.avx2(is_static=False, per_channel=False)
                         os.makedirs(cache_dir, exist_ok=True)
@@ -181,7 +182,7 @@ class Reranker:
             with torch.no_grad():
                 outputs = self._model(**inputs)
             scores = outputs.logits.squeeze(-1).tolist()
-        for doc, score in zip(documents, scores):
+        for doc, score in zip(documents, scores, strict=False):
             doc["rerank_score"] = float(score)
         return sorted(documents, key=lambda x: x.get("rerank_score", 0), reverse=True)[:top_n]
 
@@ -292,7 +293,7 @@ class HybridRetriever(BaseRetriever):
                 try:
                     kg_results = self.kg_retriever.retrieve(query=query, query_embedding=query_vector)
                     kg_span.set_attribute("retrieve.kg_count", len(kg_results))
-                except Exception as e:  # noqa: BLE001 - KG 失败绝不拖垮主检索链路
+                except Exception as e:
                     kg_span.record_exception(e)
                     kg_span.set_attribute("retrieve.kg_failed", True)
                     kg_results = []
@@ -446,7 +447,7 @@ class HybridRetriever(BaseRetriever):
         # 决定要丢的 smalls 和要加的 mediums
         smalls_to_drop: set = set()
         promoted_mediums: List[Dict] = []
-        for m_content, s_indices in medium_content_to_smalls.items():
+        for s_indices in medium_content_to_smalls.values():
             if len(s_indices) >= 2:
                 smalls_to_drop.update(s_indices)
                 m_dict = small_to_medium[s_indices[0]]
@@ -468,20 +469,20 @@ class HybridRetriever(BaseRetriever):
             pm_norm = _normalize(pm.get("content", ""))
             if not pm_norm:
                 continue
-            for l in larges:
-                l_norm = _normalize(l.get("content", ""))
+            for large in larges:
+                l_norm = _normalize(large.get("content", ""))
                 if pm_norm != l_norm and pm_norm in l_norm:
-                    medium_to_large[pm_idx] = l
+                    medium_to_large[pm_idx] = large
                     break
 
         # 按 large 分组 mediums
         large_content_to_mediums: Dict[str, List[int]] = defaultdict(list)
-        for pm_idx, l in medium_to_large.items():
-            large_content_to_mediums[l["content"]].append(pm_idx)
+        for pm_idx, large in medium_to_large.items():
+            large_content_to_mediums[large["content"]].append(pm_idx)
 
         mediums_to_drop: set = set()
         promoted_larges: List[Dict] = []
-        for l_content, pm_indices in large_content_to_mediums.items():
+        for pm_indices in large_content_to_mediums.values():
             if len(pm_indices) >= 2:
                 mediums_to_drop.update(pm_indices)
                 l_dict = medium_to_large[pm_indices[0]]

@@ -86,7 +86,7 @@ def _call_llm_with_retry(llm, prompt: str, chunk_id: str):
     for attempt in range(MAX_LLM_RETRIES + 1):
         try:
             return invoke_llm_threadsafe(llm, messages)
-        except Exception as exc:  # noqa: BLE001 - LLM 提供方异常类型不固定
+        except Exception as exc:
             last_exc = exc
             logger.warning(
                 "kg.extract.llm call failed chunk_id=%s attempt=%d/%d: %s",

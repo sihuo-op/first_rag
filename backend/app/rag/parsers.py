@@ -6,7 +6,7 @@
 
 import re
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List
+from typing import Any, Dict
 
 
 class DocumentParser(ABC):
@@ -55,7 +55,7 @@ class MarkdownParser(DocumentParser):
     """Markdown 解析器"""
 
     def parse(self, file_path: str) -> tuple[str, Dict[str, Any]]:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, encoding='utf-8') as f:
             content = f.read()
         plain_text = self._markdown_to_plain_text(content)
         metadata = {"file_type": "md", "character_count": len(plain_text), "original_character_count": len(content)}
@@ -82,7 +82,7 @@ class TxtParser(DocumentParser):
     """纯文本解析器"""
 
     def parse(self, file_path: str) -> tuple[str, Dict[str, Any]]:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, encoding='utf-8') as f:
             content = f.read()
         metadata = {"file_type": "txt", "character_count": len(content)}
         return content, metadata

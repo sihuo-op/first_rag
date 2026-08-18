@@ -4,13 +4,25 @@
 定义了 RAG 系统的 SQLAlchemy ORM 模型，包括用户、文档、文档片段、会话和消息。
 """
 
+import enum
+
 from sqlalchemy import (
-    Column, Integer, String, Text, BigInteger, Boolean, DateTime,
-    ForeignKey, JSON, Enum as SQLEnum, func, Float, UniqueConstraint
+    JSON,
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
 )
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-import enum
 
 Base = declarative_base()
 
