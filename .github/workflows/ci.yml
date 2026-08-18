@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Ruff check
+        run: ruff check backend/app backend/main.py
+
+  backend-tests:
+    runs-on: ubuntu-latest
+    env:
+      EMBEDDING_USE_LOCAL: "true"
+      EMBEDDING_DIMENSION: "768"
+      SENTENCE_TRANSFORMER_MODEL: "BAAI/bge-small-zh-v1.5"
+      CHAT_API_BASE: "https://api.example.com/v1"
+      CHAT_MODEL: "test-model"
+      RERANKER_ENABLED: "false"
+      RERANKER_MODEL: "BAAI/bge-reranker-base"
+      RERANKER_TOP_N: "5"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+      - name: Run unit tests with coverage
+        working-directory: backend
+        run: >
+          pytest tests/unit tests/test_char_offset_schema.py tests/test_splitter_offset.py
+          tests/test_hybrid_retriever_kg.py tests/test_kg_upload_hook.py
+          --cov=app --cov-report=xml:coverage.xml --cov-report=term -q
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: backend/coverage.xml
+
+  kg-tests:
+    runs-on: ubuntu-latest
+    env:
+      EMBEDDING_USE_LOCAL: "true"
+      EMBEDDING_DIMENSION: "768"
+      SENTENCE_TRANSFORMER_MODEL: "BAAI/bge-small-zh-v1.5"
+      CHAT_API_BASE: "https://api.example.com/v1"
+      CHAT_MODEL: "test-model"
+      RERANKER_ENABLED: "false"
+      RERANKER_MODEL: "BAAI/bge-reranker-base"
+      RERANKER_TOP_N: "5"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest neo4j tenacity testcontainers-neo4j
+      - name: Run KG integration tests (testcontainers Neo4j)
+        working-directory: backend
+        run: pytest tests/test_knowledge_graph --ignore=tests/test_knowledge_graph/test_e2e.py -q
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build
+        working-directory: frontend
+        run: npm run build

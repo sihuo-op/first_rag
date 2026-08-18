@@ -17,5 +17,41 @@ dependencies = [
 test = [
     "pytest>=7.0",
     "testcontainers-neo4j>=4.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["data", ".claude", ".venv", "node_modules", "frontend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "B008",    # FastAPI Depends() 惯用法
+    "UP006",   # typing.List -> list：存量机械改动量大，暂不启用
+    "UP035",   # 同上（deprecated-import from typing）
+    "UP045",   # Optional[X] -> X | None：同上
+    "UP042",   # str.Enum -> StrEnum：存量改动，收益低
+    "RUF001",  # 中文全角标点误报（本项目注释/文案为中文）
+    "RUF002",  # 同上
+    "RUF003",  # 同上
+    "RUF012",  # 类属性可变默认值（dataclass field 模式）
+    "RUF006",  # asyncio.create_task fire-and-forget 是有意为之（预热/统计）
+    "SIM117",  # 嵌套 with：可读性优先
+    "E501",    # 长行多为中文提示文案，不做强制折行
+    "E402",    # 部分模块为缩短启动时间故意延迟导入
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["*/__pycache__/*"]
+
+[tool.coverage.report]
+show_missing = false
+precision = 1
 
